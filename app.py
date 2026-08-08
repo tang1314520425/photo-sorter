@@ -644,6 +644,8 @@ class MainWindow(QMainWindow):
 
     def _on_scan_row(self, i, total, item):
         self.items.append(item)
+        self._item_index = getattr(self, "_item_index", {})
+        self._item_index[id(item)] = len(self.items) - 1
         self._fill(len(self.items) - 1, item)
         self.pb.setValue(i)
         self._status(f"识别中 {i}/{total}　·　{os.path.basename(item.src)} → {item.category}")
@@ -708,11 +710,14 @@ class MainWindow(QMainWindow):
         self.b_undo.setEnabled(bool(rep.undo_file))
         self._status(f"归档完成：成功 {rep.moved}，跳过 {rep.skipped}，失败 {rep.failed}", OKC)
         lines = "\n".join(f"　{k} → {v} 个" for k, v in sorted(rep.by_category.items(), key=lambda x: -x[1]))
-        QMessageBox.information(
-            self, "整理完成",
+        detail = (
             f"成功 {rep.moved} 个，跳过 {rep.skipped} 个，失败 {rep.failed} 个。\n\n{lines}\n\n"
             "原文件画质、格式、拍摄信息全部原样保留。\n不满意可点「撤销上次整理」还原。"
         )
+        if rep.warning:
+            detail += "\n\n⚠ " + rep.warning
+            self._status("归档完成 · 注意：撤销记录写入失败（详见弹窗）", WARNC)
+        QMessageBox.information(self, "整理完成", detail)
 
     def _on_fail(self, tb):
         self._set_busy(False)

@@ -115,6 +115,6 @@ exit /b 1
 '''
 
 for fn, txt in [('启动.bat', launch), ('安装依赖.bat', install)]:
-    with open(os.path.join(base, fn), 'w', encoding='gbk') as f:
+    with open(os.path.join(base, fn), 'w', encoding='utf-8-sig') as f:
         f.write(txt)
-    print('wrote', fn, os.path.getsize(os.path.join(base, fn)), 'bytes (gbk)')
+    print('wrote', fn, os.path.getsize(os.path.join(base, fn)), 'bytes (utf-8-sig)')

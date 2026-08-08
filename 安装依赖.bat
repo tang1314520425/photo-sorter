@@ -1,16 +1,16 @@
-@echo off
+ï»¿@echo off
 chcp 65001 >nul
-title °²×°ÔËĞĞ»·¾³
+title å®‰è£…è¿è¡Œç¯å¢ƒ
 
 set "MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple"
 set "HF_ENDPOINT=https://hf-mirror.com"
 set "PYEXE="
 
-:: 1) ±ãĞ¯ venv
+:: 1) ä¾¿æº venv
 if exist "%~dp0venv\Scripts\python.exe" set "PYEXE=%~dp0venv\Scripts\python.exe"
-:: 2) ±¾»ú WorkBuddy venv£¨½ö TJM »úÆ÷£¬±£Áô»ØÍË£©
+:: 2) æœ¬æœº WorkBuddy venvï¼ˆä»… TJM æœºå™¨ï¼Œä¿ç•™å›é€€ï¼‰
 if not defined PYEXE if exist "C:\Users\TJM\.workbuddy\binaries\python\envs\photosort\Scripts\python.exe" set "PYEXE=C:\Users\TJM\.workbuddy\binaries\python\envs\photosort\Scripts\python.exe"
-:: 3) ÏµÍ³ Python
+:: 3) ç³»ç»Ÿ Python
 if not defined PYEXE (
   for /f "delims=" %%i in ('where py 2^>nul') do ( set "PYEXE=%%i" & goto :havepy )
 )
@@ -20,32 +20,32 @@ if not defined PYEXE (
 )
 :havepy2
 if not defined PYEXE (
-  echo ÕÒ²»µ½ Python£¬ÇëÏÈ°²×° Python 3.10+ ºóÖØÊÔ¡£
+  echo æ‰¾ä¸åˆ° Pythonï¼Œè¯·å…ˆå®‰è£… Python 3.10+ åé‡è¯•ã€‚
   pause & exit /b 1
 )
 
 echo.
 echo ============================================================
-echo   ÕÕÆ¬ÊÓÆµÖÇÄÜ·ÖÀàÕûÀí - »·¾³°²×°
-echo   È«²¿×°ÔÚ¶ÀÁ¢»·¾³Àï£¬²»»áÓ°ÏìÄãµçÄÔÉÏÆäËü Python
+echo   ç…§ç‰‡è§†é¢‘æ™ºèƒ½åˆ†ç±»æ•´ç† - ç¯å¢ƒå®‰è£…
+echo   å…¨éƒ¨è£…åœ¨ç‹¬ç«‹ç¯å¢ƒé‡Œï¼Œä¸ä¼šå½±å“ä½ ç”µè„‘ä¸Šå…¶å®ƒ Python
 echo ============================================================
 echo.
 
 if "%PYEXE%"=="%~dp0venv\Scripts\python.exe" (
-  echo [1/3] ±ãĞ¯»·¾³ÒÑ´æÔÚ£¬Ìø¹ı¡£
+  echo [1/3] ä¾¿æºç¯å¢ƒå·²å­˜åœ¨ï¼Œè·³è¿‡ã€‚
 ) else (
-  echo [1/3] Ê¹ÓÃÏÖÓĞ Python£º%PYEXE%
+  echo [1/3] ä½¿ç”¨ç°æœ‰ Pythonï¼š%PYEXE%
 )
 
 echo.
-echo [2/3] °²×°»ù´¡×é¼ş£¨Ô¼ 60MB£©...
+echo [2/3] å®‰è£…åŸºç¡€ç»„ä»¶ï¼ˆçº¦ 60MBï¼‰...
 "%PYEXE%" -m pip install -i %MIRROR% pillow numpy imageio-ffmpeg
 if errorlevel 1 goto :fail
 
 echo.
-echo [3/3] °²×°ÓïÒåÊ¶±ğ×é¼ş£¨CPU °æ£¬Ô¼ 600MB£¬¿ÉÌø¹ıµ«Ç¿ÁÒ½¨Òé×°£©...
-echo       ²»×°Ò²ÄÜÓÃ£¬µ«Ö»ÄÜ°´¡¸¶¯Í¼/½ØÍ¼¡¹ÕâÀà¹æÔòÕûÀí¡£
-choice /c YN /n /m "ÏÖÔÚ°²×°ÓïÒåÊ¶±ğ£¿(Y=×° / N=Ìø¹ı) "
+echo [3/3] å®‰è£…è¯­ä¹‰è¯†åˆ«ç»„ä»¶ï¼ˆCPU ç‰ˆï¼Œçº¦ 600MBï¼Œå¯è·³è¿‡ä½†å¼ºçƒˆå»ºè®®è£…ï¼‰...
+echo       ä¸è£…ä¹Ÿèƒ½ç”¨ï¼Œä½†åªèƒ½æŒ‰ã€ŒåŠ¨å›¾/æˆªå›¾ã€è¿™ç±»è§„åˆ™æ•´ç†ã€‚
+choice /c YN /n /m "ç°åœ¨å®‰è£…è¯­ä¹‰è¯†åˆ«ï¼Ÿ(Y=è£… / N=è·³è¿‡) "
 if errorlevel 2 goto :qt
 "%PYEXE%" -m pip install --index-url https://download.pytorch.org/whl/cpu torch
 if errorlevel 1 goto :fail
@@ -53,25 +53,25 @@ if errorlevel 1 goto :fail
 if errorlevel 1 goto :fail
 
 echo.
-echo ÕıÔÚÔ¤ÏÂÔØÊÓ¾õÄ£ĞÍ£¨Ô¼ 600MB£¬Ö»ĞèÒ»´Î£¬Ö®ºóÓÀ¾ÃÀëÏß¿ÉÓÃ£©...
-"%PYEXE%" -c "import os;os.environ['HF_ENDPOINT']='https://hf-mirror.com';import open_clip;open_clip.create_model_and_transforms('ViT-B-32',pretrained='laion2b_s34b_b79k');print('Ä£ĞÍ¾ÍĞ÷')"
+echo æ­£åœ¨é¢„ä¸‹è½½è§†è§‰æ¨¡å‹ï¼ˆçº¦ 600MBï¼Œåªéœ€ä¸€æ¬¡ï¼Œä¹‹åæ°¸ä¹…ç¦»çº¿å¯ç”¨ï¼‰...
+"%PYEXE%" -c "import os;os.environ['HF_ENDPOINT']='https://hf-mirror.com';import open_clip;open_clip.create_model_and_transforms('ViT-B-32',pretrained='laion2b_s34b_b79k');print('æ¨¡å‹å°±ç»ª')"
 
 :qt
 echo.
-echo °²×°½çÃæ×é¼ş...
+echo å®‰è£…ç•Œé¢ç»„ä»¶...
 "%PYEXE%" -m pip install -i %MIRROR% PySide6-Essentials
 if errorlevel 1 goto :fail
 
 :done
 echo.
 echo ============================================================
-echo   ×°ºÃÁË¡£Ë«»÷¡¸Æô¶¯.bat¡¹¼´¿ÉÊ¹ÓÃ¡£
+echo   è£…å¥½äº†ã€‚åŒå‡»ã€Œå¯åŠ¨.batã€å³å¯ä½¿ç”¨ã€‚
 echo ============================================================
 pause
 exit /b 0
 
 :fail
 echo.
-echo   °²×°³ö´í£¬Çë°ÑÉÏÃæµÄºì×Ö½ØÍ¼·¢³öÀ´¡£
+echo   å®‰è£…å‡ºé”™ï¼Œè¯·æŠŠä¸Šé¢çš„çº¢å­—æˆªå›¾å‘å‡ºæ¥ã€‚
 pause
 exit /b 1

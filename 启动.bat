@@ -1,16 +1,16 @@
-@echo off
+ï»¿@echo off
 chcp 65001 >nul
-title ÕÕÆ¬ÊÓÆµÖÇÄÜ·ÖÀàÕûÀí
+title ç…§ç‰‡è§†é¢‘æ™ºèƒ½åˆ†ç±»æ•´ç†
 
 set "HF_ENDPOINT=https://hf-mirror.com"
 set "PYTHONUTF8=1"
 set "PYEXE="
 
-:: 1) ±ãÐ¯ venv£¨Óë½Å±¾Í¬Ä¿Â¼µÄ venv£©
+:: 1) ä¾¿æº venvï¼ˆä¸Žè„šæœ¬åŒç›®å½•çš„ venvï¼‰
 if exist "%~dp0venv\Scripts\pythonw.exe" set "PYEXE=%~dp0venv\Scripts\pythonw.exe"
-:: 2) ±¾»ú WorkBuddy ×¨ÓÃ venv£¨½ö TJM ÕâÌ¨»úÆ÷ÓÐÐ§£¬±£Áô×÷»ØÍË£¬²»Ó°ÏìÆäËûÓÃ»§£©
+:: 2) æœ¬æœº WorkBuddy ä¸“ç”¨ venvï¼ˆä»… TJM è¿™å°æœºå™¨æœ‰æ•ˆï¼Œä¿ç•™ä½œå›žé€€ï¼Œä¸å½±å“å…¶ä»–ç”¨æˆ·ï¼‰
 if not defined PYEXE if exist "C:\Users\TJM\.workbuddy\binaries\python\envs\photosort\Scripts\pythonw.exe" set "PYEXE=C:\Users\TJM\.workbuddy\binaries\python\envs\photosort\Scripts\pythonw.exe"
-:: 3) ÏµÍ³ Python
+:: 3) ç³»ç»Ÿ Python
 if not defined PYEXE (
   where pythonw >nul 2>&1 && set "PYEXE=pythonw"
 )
@@ -20,8 +20,8 @@ if not defined PYEXE (
 
 if not defined PYEXE (
   echo.
-  echo   ÕÒ²»µ½ Python ÔËÐÐ»·¾³¡£
-  echo   ÇëÏÈÔËÐÐ¡¸°²×°ÒÀÀµ.bat¡¹»ò°²×° Python 3.10+¡£
+  echo   æ‰¾ä¸åˆ° Python è¿è¡ŒçŽ¯å¢ƒã€‚
+  echo   è¯·å…ˆè¿è¡Œã€Œå®‰è£…ä¾èµ–.batã€æˆ–å®‰è£… Python 3.10+ã€‚
   echo.
   pause
   exit /b 1

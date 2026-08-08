@@ -117,7 +117,7 @@ def _looks_like_our_dir(dirpath: str, name: str, cat_names: set[str]) -> bool:
         for fn in os.listdir(dirpath):
             if os.path.isfile(os.path.join(dirpath, fn)):
                 stem = os.path.splitext(fn)[0]
-                if re.match(r"^" + re.escape(base) + r"\d{2,}", stem):
+                if re.match(r"^" + re.escape(base) + r"\d{2,}", stem, re.IGNORECASE):
                     return True
     except OSError:
         return False
