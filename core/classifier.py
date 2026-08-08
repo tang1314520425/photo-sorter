@@ -24,6 +24,18 @@ from .media import MediaInfo
 MODEL_NAME = "ViT-B-32"
 MODEL_PRETRAINED = "laion2b_s34b_b79k"
 
+# 完全离线分发：模型权重随 exe 内置（models/open_clip_model.safetensors）。
+# 打包后 PyInstaller 会把文件放在 sys._MEIPASS/models/ 下；运行时优先从这里读，
+# 不联网、不下载。开发态（未打包）返回 None，走原「首次联网下载」逻辑。
+def _bundle_weights_path():
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        p = os.path.join(base, "models", "open_clip_model.safetensors")
+        if os.path.exists(p):
+            return p
+    return None
+
+
 # 常见屏幕/手机分辨率，用于辅助识别截图
 _SCREEN_SIZES = {
     (1920, 1080), (1366, 768), (2560, 1440), (3840, 2160), (1440, 900),
@@ -84,10 +96,9 @@ class SemanticEngine:
             if self.available:
                 return True, self.status
             try:
-                if progress:
-                    progress("正在载入本地视觉模型…（首次需下载约 600MB，之后永久离线可用）")
                 import torch
                 import open_clip
+                from safetensors.torch import load_file
 
                 torch.set_grad_enabled(False)
                 try:
@@ -95,9 +106,21 @@ class SemanticEngine:
                 except Exception:
                     pass
 
-                model, _, preprocess = open_clip.create_model_and_transforms(
-                    MODEL_NAME, pretrained=MODEL_PRETRAINED
-                )
+                # 完全离线分发：权重随 exe 内置，优先从 bundle 读取，绝不联网
+                bundled = _bundle_weights_path()
+                if bundled:
+                    if progress:
+                        progress("正在载入内置视觉模型（完全离线，无需下载）…")
+                    model, _, preprocess = open_clip.create_model_and_transforms(
+                        MODEL_NAME, pretrained=False
+                    )
+                    model.load_state_dict(load_file(bundled))
+                else:
+                    if progress:
+                        progress("正在载入本地视觉模型…（首次需下载约 600MB，之后永久离线可用）")
+                    model, _, preprocess = open_clip.create_model_and_transforms(
+                        MODEL_NAME, pretrained=MODEL_PRETRAINED
+                    )
                 model.eval()
                 self._torch = torch
                 self._model = model

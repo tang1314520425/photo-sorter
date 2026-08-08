@@ -13,6 +13,11 @@
 - **[I1]** `_SCREEN_SIZES` 分辨率集合存在重复项 `(1080, 1920)`，已清理。
 - **[I2]** `_on_scan_row` 追加识别结果时未同步 `_item_index`，已补同步（无实际风险，纯健壮性）。
 
+### 完全离线分发
+- 将 CLIP 模型权重（`open_clip_model.safetensors`，约 600MB）随 exe 一并打包，任何电脑断网也能直接识别，无需首次联网下载。
+- `core/classifier.py` 新增 `_bundle_weights_path()`：打包后优先从 `sys._MEIPASS/models/` 读取内置权重，绝不联网；开发态仍走「首次联网下载」逻辑，向后兼容。
+- `build_exe.py` 产出 `照片视频智能分类整理_windows_v1.0.1_offline.zip`（含权重，约 850MB）；另保留标准版 `..._windows_v1.0.1.zip`（不含权重，约 240MB，适合已下载过权重的电脑）。
+
 ## [1.0.0] - 2026-08-08
 
 ### 新增
