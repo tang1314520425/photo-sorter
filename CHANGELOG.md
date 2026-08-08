@@ -18,6 +18,11 @@
 - `core/classifier.py` 新增 `_bundle_weights_path()`：打包后优先从 `sys._MEIPASS/models/` 读取内置权重，绝不联网；开发态仍走「首次联网下载」逻辑，向后兼容。
 - `build_exe.py` 产出 `照片视频智能分类整理_windows_v1.0.1_offline.zip`（含权重，约 850MB）；另保留标准版 `..._windows_v1.0.1.zip`（不含权重，约 240MB，适合已下载过权重的电脑）。
 
+### 第三轮外部审查（Info 级，无阻塞）
+- **[I3]** `_set_folder` 切换文件夹时未重置 `_item_index` → 已在 `_set_folder` 加 `self._item_index = {}` 保持状态一致（无实际风险，纯健壮）。
+- **[I4]** `.bat` 采用 UTF-8 BOM + `chcp 65001`，在极旧 Windows（Win8/早期 Win10）上首行可能报噪音；审查者确认对主流 Win10/11 合理、无需强制修改，且退回 GBK 会重新乱码，故保持现状。
+- `build_exe.py`：沙箱禁止 `shutil.rmtree`/`rmdir` 删除，旧产物改由 PyInstaller `--noconfirm` 自行覆盖，构建步骤不再手动删除。
+
 ## [1.0.0] - 2026-08-08
 
 ### 新增

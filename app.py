@@ -623,6 +623,7 @@ class MainWindow(QMainWindow):
         self.b_undo.setEnabled(bool(list_undo_files(p)))
         self.tb.setRowCount(0)
         self.items = []
+        self._item_index = {}
         self._status("已选中文件夹　·　先点「开始识别」看结果，确认无误再归档")
 
     # ------------------------------------------------------------------ 识别
