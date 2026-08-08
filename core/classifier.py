@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import threading
 
 # 必须在 import 任何 huggingface 相关库之前设置，否则国内下载模型会卡死

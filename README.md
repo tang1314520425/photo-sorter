@@ -117,9 +117,19 @@ python selftest.py
 - **报告问题 / 提建议**：在仓库的 Issues 区描述现象、复现步骤、预期行为。
 - **提交修改**：Fork → 改代码 → 跑 `python selftest.py` 确保通过 → 提 Pull Request。
 - **接收外部修改**：维护者把 PR 合并进主仓库后，再从主仓库把更新拉回本地继续迭代。
-- **版本与发布**：版本号记录在 `VERSION` 文件，变更写进 `CHANGELOG.md`；每个正式版本打 git tag（如 `v1.0.0`）并发布 Release（含源码包与 Windows exe 的 SHA256）。
+- **版本与发布**：版本号记录在 `VERSION` 文件，变更写进 [CHANGELOG.md](docs/CHANGELOG.md)；每个正式版本打 git tag（如 `v1.0.0`）并发布 Release（含源码包与 Windows exe 的 SHA256）。
 
-贡献规范见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+贡献规范见 [CONTRIBUTING.md](docs/CONTRIBUTING.md)。
+
+---
+
+## 📚 更多文档
+
+完整文档已归入 [`docs/`](docs/) 目录：
+
+- [使用说明（中文详细）](docs/使用说明.md)
+- [CHANGELOG 版本变更记录](docs/CHANGELOG.md)
+- [贡献指南 CONTRIBUTING](docs/CONTRIBUTING.md)
 
 ---
 

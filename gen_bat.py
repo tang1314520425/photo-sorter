@@ -1,6 +1,7 @@
 import os
 
-base = r'C:\Users\TJM\WorkBuddy\2026-08-08-11-19-20\photo_sorter'
+# 运行目录即脚本所在目录，保证克隆到任何位置都能正确写出 bat
+base = os.path.dirname(os.path.abspath(__file__))
 
 launch = r'''@echo off
 chcp 65001 >nul

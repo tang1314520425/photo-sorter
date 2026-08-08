@@ -16,10 +16,11 @@ import shutil
 import subprocess
 import sys
 
-VENV = "Scripts/python.exe"  # 若用本机 venv，改成绝对路径；普通 python 也可
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(SRC_DIR, "..", "dist_release")  # 默认输出到源码仓外的发布目录
 APP_NAME = "照片视频智能分类整理"
+with open(os.path.join(SRC_DIR, "VERSION"), encoding="utf-8") as _f:
+    VERSION = _f.read().strip()
 
 # CLIP 权重（约 600MB）。本机已下载，打进 exe 的 models/ 目录。
 # 其它机器：改成你本地下载好的 open_clip_model.safetensors 绝对路径。
@@ -92,8 +93,8 @@ def main():
     shutil.copytree(src, dst)
     print("EXE 已复制到:", dst)
 
-    # 5) 打包成 zip 方便分发
-    zip_path = os.path.join(OUT_DIR, APP_NAME + "_windows_v1.0.1_offline.zip")
+    # 5) 打包成 zip 方便分发（版本号自动取自 VERSION 文件）
+    zip_path = os.path.join(OUT_DIR, APP_NAME + f"_windows_v{VERSION}_offline.zip")
     if os.path.exists(zip_path):
         os.remove(zip_path)
     shutil.make_archive(os.path.splitext(zip_path)[0], "zip", OUT_DIR, APP_NAME + "_windows_offline")

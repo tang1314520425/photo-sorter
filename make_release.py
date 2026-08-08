@@ -1,7 +1,9 @@
 import os, zipfile, hashlib
 
-SRC = r'C:\Users\TJM\WorkBuddy\2026-08-08-11-19-20\photo_sorter'
-OUT = r'D:\AI本地大模型\work Buddy生成的软件（开源）\photo_sorter_v1.0.1.zip'
+SRC = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(SRC, 'VERSION'), encoding='utf-8') as _f:
+    VER = _f.read().strip()
+OUT = os.path.join(r'D:\AI本地大模型\work Buddy生成的软件（开源）', f'photo_sorter_v{VER}.zip')
 ROOT = 'photo_sorter'
 SKIP_DIRS = {'.git', '__pycache__', 'venv', 'envs', '.photo_sorter_undo', 'build', 'dist'}
 SKIP_FILES = {'settings.json', 'make_release.py', 'CHECKSUMS.txt'}
