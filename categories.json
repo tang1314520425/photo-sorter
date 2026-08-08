@@ -155,6 +155,14 @@
         "a photo of tools, gadgets or electronic devices",
         "a photo of a random object indoors"
       ]
+    },
+    {
+      "name": "星空",
+      "enabled": true,
+      "rule": null,
+      "prompts": [
+        "星星、月亮、银河可放入此类"
+      ]
     }
   ]
 }
