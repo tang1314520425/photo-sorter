@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "_说明": "类别清单可直接编辑本文件，或在程序界面中增删改。name=文件夹名与编号前缀；prompts=英文语义描述（喂给本地视觉模型，写得越具体越准）；rule=特殊规则(animated/screenshot/video)，有 rule 的类别优先于语义判断；enabled=是否启用。",
+  "fallback": "其它",
+  "min_confidence": 0.22,
+  "categories": [
+    {
+      "name": "动图",
+      "enabled": true,
+      "rule": "animated",
+      "prompts": []
+    },
+    {
+      "name": "截图",
+      "enabled": true,
+      "rule": "screenshot",
+      "prompts": [
+        "a screenshot of a computer screen",
+        "a screenshot of a mobile phone app interface",
+        "a screenshot of a chat conversation"
+      ]
+    },
+    {
+      "name": "证件票据",
+      "enabled": true,
+      "rule": null,
+      "prompts": [
+        "a scan of an identification card",
+        "a photo of a passport page",
+        "a photo of a drivers license card",
+        "a photo of an official certificate document",
+        "a scanned paper document with text",
+        "a photo of a bank card"
+      ]
+    },
+    {
+      "name": "人像",
+      "enabled": true,
+      "rule": null,
+      "prompts": [
+        "a portrait photograph of a person's face",
+        "a selfie photo of a person",
+        "a photo of a person posing for the camera",
+        "a group photo of several people",
+        "a full body photo of a person"
+      ]
+    },
+    {
+      "name": "风景",
+      "enabled": true,
+      "rule": null,
+      "prompts": [
+        "a landscape photograph of mountains and sky",
+        "a photo of the sea and beach scenery",
+        "a photo of a forest, lake or river",
+        "a photo of countryside fields and nature",
+        "a scenic view of clouds and sunset"
+      ]
+    },
+    {
+      "name": "博物馆",
+      "enabled": true,
+      "rule": null,
+      "prompts": [
+        "a photo inside a museum exhibition hall",
+        "a photo of an ancient artifact in a display case",
+        "a photo of a sculpture or painting in an art gallery",
+        "a photo of a historical relic exhibit"
+      ]
+    },
+    {
+      "name": "飞机",
+      "enabled": true,
+      "rule": null,
+      "prompts": [
+        "a photo of an airplane",
+        "a photo of a jet aircraft at an airport",
+        "a photo of an airplane flying in the sky",
+        "a photo of a helicopter or military aircraft"
+      ]
+    },
+    {
+      "name": "动物（宠物）",
+      "enabled": true,
+      "rule": null,
+      "prompts": [
+        "a photo of a pet cat",
+        "a photo of a pet dog",
+        "a photo of a small pet animal at home",
+        "a close-up photo of an animal"
+      ]
+    },
+    {
+      "name": "漫画",
+      "enabled": true,
+      "rule": null,
+      "prompts": [
+        "a page of a comic book with panels",
+        "a manga page in black and white",
+        "an anime style cartoon character image",
+        "a japanese anime screenshot"
+      ]
+    },
+    {
+      "name": "插画",
+      "enabled": true,
+      "rule": null,
+      "prompts": [
+        "a digital illustration artwork",
+        "a hand drawn painting or sketch",
+        "a stylized vector graphic design",
+        "a concept art illustration"
+      ]
+    },
+    {
+      "name": "美食",
+      "enabled": true,
+      "rule": null,
+      "prompts": [
+        "a photo of food on a plate",
+        "a photo of a meal at a restaurant table",
+        "a close-up photo of delicious dishes",
+        "a photo of drinks and desserts"
+      ]
+    },
+    {
+      "name": "建筑",
+      "enabled": true,
+      "rule": null,
+      "prompts": [
+        "a photo of a building exterior",
+        "a photo of city architecture and skyscrapers",
+        "a photo of an ancient temple or traditional architecture",
+        "a photo of a street with buildings"
+      ]
+    },
+    {
+      "name": "车辆",
+      "enabled": true,
+      "rule": null,
+      "prompts": [
+        "a photo of a car",
+        "a photo of a truck or bus",
+        "a photo of a motorcycle",
+        "a photo of a train"
+      ]
+    },
+    {
+      "name": "事物",
+      "enabled": true,
+      "rule": null,
+      "prompts": [
+        "a close-up photo of an everyday object",
+        "a product photo of an item on a plain background",
+        "a photo of tools, gadgets or electronic devices",
+        "a photo of a random object indoors"
+      ]
+    }
+  ]
+}
