@@ -39,6 +39,7 @@ class PlanItem:
     status: str = "待处理"        # 待处理 / 已完成 / 跳过 / 失败
     detail: str = ""
     shot_time: float = 0.0
+    time_source: str = ""     # exif / filename / filetime / ctime / video_meta / unknown
 
 
 @dataclass
@@ -108,7 +109,7 @@ def _looks_like_our_dir(dirpath: str, name: str, cat_names: set[str]) -> bool:
     base = n if n in cat_names else None
     if base is None:
         for c in cat_names:
-            if n.endswith("-" + c):
+            if n == c or n.endswith(c):   # 2026人像 / 2026-08人像 / 2023-05-12-人像 都算
                 base = c
                 break
     if base is None:
@@ -180,10 +181,13 @@ class Namer:
         return self.date_tag                                       # 手动日期段
 
     def _scan_folder(self, folder: str, category: str) -> dict:
-        taken: set[str] = set()
-        start = 0
+        """扫描已存在的编号，按「文件夹+日期段」分组返回各自最大序号。
+
+        这样同一文件夹内不同日期的照片各自从 01 开始编号，不会跨月串号。
+        """
+        seqs: dict[str, int] = {}
         pat = re.compile(r"^" + re.escape(category)
-                         + r"(?:-\d{2,4}(?:-\d{2}){0,2})?-?(\d{2,})(?:_.*)?$")
+                         + r"(?:-(\d{4}(?:-\d{2}){0,2}))?-?(\d{2,})(?:_.*)?$")
         stack = [folder]
         while stack:
             d = stack.pop()
@@ -194,50 +198,49 @@ class Namer:
                     fp = os.path.join(d, fn)
                     if os.path.isdir(fp):
                         stack.append(fp)          # 嵌套目录（如旧的时间板块）也统计
-                    else:
-                        taken.add(fp.lower())     # 用完整目标路径去重
-                        m = pat.match(os.path.splitext(fn)[0])
-                        if m:
-                            start = max(start, int(m.group(1)))
+                        continue
+                    m = pat.match(os.path.splitext(fn)[0])
+                    if m:
+                        fd = m.group(1) or ""     # 日期段（可能为空）
+                        key = f"{folder}|{fd}"
+                        seqs[key] = max(seqs.get(key, 0), int(m.group(2)))
             except OSError:
                 pass
-        return {"max": start, "taken": taken}
+        return seqs
 
     def next_name(self, category: str, src: str, shot_time: float = 0.0) -> tuple[str, str]:
-        tt = self._time_tag(shot_time)
+        # 文件名日期段：手动日期段或按 date_granularity 自动取（始终带在文件名上）
+        file_tag = self._time_tag(shot_time)
 
         # —— 文件夹名 ——
-        if self.time_block and tt:
-            folder_name = f"{tt}-{category}"      # 2021-人像
+        if self.time_block:
+            # 时间板块：文件夹按 time_block_granularity（年/月）分，文件名仍带完整日期
+            tb = date_segment(shot_time, self.time_block_granularity) if shot_time else ""
+            folder_name = f"{tb}{category}" if tb else category   # 2026人像 / 2026-08人像
         else:
             folder_name = category                # 人像
         folder = os.path.join(self.root, folder_name)
         if folder not in self._cache:
             self._cache[folder] = self._scan_folder(folder, category)
         state = self._cache[folder]
-
-        # —— 文件名里的日期段 ——
-        # 勾了时间板块时，时间已体现在文件夹名里，文件名不再重复带日期
-        fn_date = "" if (self.time_block and tt) else tt
+        key = f"{folder}|{file_tag}"   # 同一文件夹内，不同日期段各自独立编号
 
         base_old, ext = os.path.splitext(os.path.basename(src))
         while True:
-            state["max"] += 1
-            seq = f"{state['max']:02d}"           # 超过 99 自动变三位、四位，不会撞号
-            if fn_date:
-                stem = f"{category}{fn_date}-{seq}"
+            cur = state.get(key, 0) + 1
+            seq = f"{cur:02d}"           # 超过 99 自动变三位、四位，不会撞号
+            if file_tag:
+                stem = f"{category}{file_tag}-{seq}"
             else:
                 stem = f"{category}{seq}"         # 人像01 / 风景02
             if self.keep_original:
                 stem = f"{stem}_{sanitize(base_old)[:40]}"
             fn = stem + ext
             dst = os.path.join(folder, fn)
-            if dst.lower() in state["taken"]:
-                continue
             if os.path.exists(dst):              # 双保险：文件系统层面再确认一次
-                state["taken"].add(dst.lower())
+                state[key] = max(state.get(key, 0), cur)
                 continue
-            state["taken"].add(dst.lower())
+            state[key] = cur
             return dst, fn
 
 
@@ -258,7 +261,7 @@ class Organizer:
         for i, path in enumerate(files, 1):
             if self.stop_flag.is_set():
                 break
-            info = probe(path)
+            info = probe(path, date_source=self.settings.date_source)
             res = self.classifier.classify(
                 info,
                 video_own=self.settings.video_as_own_category,
@@ -271,6 +274,7 @@ class Organizer:
                     confidence=res.confidence,
                     reason=res.reason,
                     shot_time=info.shot_time,
+                    time_source=info.time_source,
                     detail=info.error,
                 )
             )
@@ -386,6 +390,16 @@ class Organizer:
             n += 1
         with open(p, "w", encoding="utf-8") as f:
             json.dump({"time": time.time(), "root": root, "moves": log}, f, ensure_ascii=False, indent=1)
+        # 只保留最近 5 次撤销记录，更旧的自动清理，避免无限堆积
+        try:
+            all_u = list_undo_files(root)
+            for old in all_u[5:]:
+                try:
+                    os.remove(old)
+                except OSError:
+                    pass
+        except Exception:
+            pass
         return p
 
 
@@ -430,4 +444,27 @@ def undo(undo_file: str, progress=None) -> tuple[int, int, list[str]]:
         os.replace(undo_file, undo_file + ".done")
     except Exception:
         pass
+    return ok, fail, errs
+
+
+def undo_upto(root: str, target_file: str, progress=None) -> tuple[int, int, list[str]]:
+    """撤销到 target_file 这次归档（含其后所有更新的归档），一次性回到指定状态。
+
+    list_undo_files 已按时间倒序（files[0] 最新）。把 files[0..idx] 全部依次撤销，
+    即 E→A 的逆序还原。仍严格不覆盖。
+    """
+    files = list_undo_files(root)
+    if target_file not in files:
+        return 0, 0, [f"找不到撤销记录：{os.path.basename(target_file)}"]
+    idx = files.index(target_file)
+    ok = fail = 0
+    errs: list[str] = []
+    total = idx + 1
+    for i, f in enumerate(files[:total], 1):
+        o, f2, e = undo(f)
+        ok += o
+        fail += f2
+        errs.extend(e)
+        if progress:
+            progress(i, total)
     return ok, fail, errs

@@ -13,7 +13,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from PIL import Image, ImageFile
 
@@ -37,6 +37,7 @@ class MediaInfo:
     is_animated: bool = False
     frames: int = 1
     shot_time: float = 0.0    # 拍摄时间（EXIF 优先，否则文件时间），用于排序
+    time_source: str = ""     # 时间来源：exif / filename / filetime / ctime / video_meta / unknown
     duration: float = 0.0     # 视频时长（秒）
     thumb: Image.Image | None = None
     extra_frames: list = field(default_factory=list)
@@ -65,22 +66,86 @@ def _file_time(path: str) -> float:
         return 0.0
 
 
-def _exif_time(img: Image.Image) -> float:
+def _create_time(path: str) -> float:
+    """文件创建时间（Windows 上为 st_ctime；Linux/macOS st_ctime 是元数据变更时间，非真实创建时间）。
+
+    仅当 date_source='ctime' 模式使用，作为命名日期来源。
+    """
+    try:
+        st = os.stat(path)
+        ct = getattr(st, "st_ctime", 0.0)
+        return ct or _file_time(path)
+    except OSError:
+        return 0.0
+
+
+def _exif_time_pil(img: Image.Image) -> tuple[float, str]:
+    """用 Pillow 读主 IFD 的拍摄时间，返回 (时间戳, 来源)。读不到返回 (0, '')。"""
     try:
         exif = img.getexif()
         if not exif:
-            return 0.0
+            return 0.0, ""
         for tag in (36867, 36868, 306):   # DateTimeOriginal / DateTimeDigitized / DateTime
             raw = exif.get(tag)
             if raw:
                 s = str(raw).strip().replace("/", ":")
                 try:
-                    return datetime.strptime(s[:19], "%Y:%m:%d %H:%M:%S").timestamp()
+                    return datetime.strptime(s[:19], "%Y:%m:%d %H:%M:%S").timestamp(), "exif"
                 except ValueError:
                     continue
     except Exception:
         pass
-    return 0.0
+    return 0.0, ""
+
+
+def _exif_time_exifread(path: str) -> tuple[float, str]:
+    """Pillow 读不到时，用 exifread 读更完整的 EXIF（SubIFD / MakerNote）。只读不写。"""
+    try:
+        import exifread
+        with open(path, "rb") as f:
+            tags = exifread.process_file(f, details=False, stop_tag="DateTimeOriginal")
+        for tag in ("EXIF DateTimeOriginal", "EXIF DateTimeDigitized",
+                    "Image DateTimeOriginal", "Image DateTimeDigitized", "Image DateTime"):
+            raw = tags.get(tag)
+            if raw:
+                s = str(raw).strip().replace("/", ":")
+                try:
+                    return datetime.strptime(s[:19], "%Y:%m:%d %H:%M:%S").timestamp(), "exif"
+                except ValueError:
+                    continue
+    except Exception:
+        pass
+    return 0.0, ""
+
+
+_NAME_PATTERNS = [
+    re.compile(r"(\d{4})[-_.]?(\d{2})[-_.]?(\d{2})[-_.]?(\d{2})(\d{2})(\d{2})"),  # IMG_20260825_123456 / 2026.08.25.123456
+    re.compile(r"(\d{4})[-_.]?(\d{2})[-_.]?(\d{2})"),                            # 2026-08-25 / 20260825 / 2026.08.25
+]
+
+
+def _name_time(path: str) -> tuple[float, str]:
+    """从文件名解析拍摄日期（手机原文件名常自带日期），作为 EXIF 缺失时的兜底。"""
+    base = os.path.splitext(os.path.basename(path))[0]
+    for pat in _NAME_PATTERNS:
+        m = pat.search(base)
+        if not m:
+            continue
+        g = m.groups()
+        try:
+            if len(g) >= 6:
+                y, mo, d, h, mi, s = (int(x) for x in g[:6])
+                return datetime(y, mo, d, h, mi, s).timestamp(), "filename"
+            y, mo, d = (int(x) for x in g[:3])
+            return datetime(y, mo, d).timestamp(), "filename"
+        except ValueError:
+            continue
+    return 0.0, ""
+
+
+_VIDEO_CREATION_RE = re.compile(
+    r"creation_time\s*:\s*(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})?"
+)
 
 
 def _to_rgb(img: Image.Image) -> Image.Image:
@@ -102,7 +167,9 @@ def _read_image(path: str, info: MediaInfo) -> None:
         info.width, info.height = img.size
         info.frames = int(getattr(img, "n_frames", 1) or 1)
         info.is_animated = bool(getattr(img, "is_animated", False)) or info.frames > 1
-        info.shot_time = _exif_time(img)
+        info.shot_time, info.time_source = _exif_time_pil(img)
+        if not info.shot_time:
+            info.shot_time, info.time_source = _exif_time_exifread(path)
 
         # JPEG 走 draft 快速降采样解码（只影响内存副本，速度快好几倍）
         try:
@@ -192,6 +259,23 @@ def _probe_video(exe: str, path: str, info: MediaInfo) -> None:
     if m:
         h, mi, s = int(m.group(1)), int(m.group(2)), float(m.group(3))
         info.duration = h * 3600 + mi * 60 + s
+    cm = _VIDEO_CREATION_RE.search(err)
+    if cm:
+        try:
+            dt = datetime(*(int(x) for x in cm.groups()[:6]))
+            tz = cm.group(7)
+            if tz == "Z":
+                # ffmpeg 输出 UTC（带 Z），转换成当地时区显示
+                dt = dt.replace(tzinfo=timezone.utc).astimezone()
+            elif tz and tz[0] in "+-":
+                # 已带时区偏移（如 +08:00），按偏移转本地
+                sign = 1 if tz[0] == "+" else -1
+                hh = int(tz[1:3]); mm = int(tz[4:6]) if len(tz) >= 6 else 0
+                dt = dt.replace(tzinfo=timezone(sign * timedelta(hours=hh, minutes=mm))).astimezone()
+            info.shot_time = dt.timestamp()
+            info.time_source = "video_meta"
+        except ValueError:
+            pass
     for line in err.splitlines():
         if "Video:" in line:
             sm = _SIZE_RE.search(line)
@@ -227,7 +311,7 @@ def _read_video(path: str, info: MediaInfo, extra_frames: bool = True) -> list[I
         info.error = "找不到 ffmpeg，视频无法识别内容"
         return []
     _probe_video(exe, path, info)
-    info.shot_time = _file_time(path)
+    # info.shot_time 优先用视频内部 creation_time（见 _probe_video）；取不到由 probe() 统一兜底
 
     if info.duration > 1:
         points = [info.duration * r for r in ((0.15, 0.45, 0.75) if extra_frames else (0.3,))]
@@ -250,11 +334,17 @@ def _read_video(path: str, info: MediaInfo, extra_frames: bool = True) -> list[I
 # --------------------------------------------------------------------------- #
 # 统一入口
 # --------------------------------------------------------------------------- #
-def probe(path: str, video_frames: bool = True) -> MediaInfo:
-    """读取一个媒体文件的基本信息 + 内存缩略图。永远不修改原文件。"""
+def probe(path: str, video_frames: bool = True, date_source: str = "exif") -> MediaInfo:
+    """读取一个媒体文件的基本信息 + 内存缩略图。永远不修改原文件。
+
+    date_source:
+      'exif' -> 命名日期优先用照片拍摄时间（EXIF DateTimeOriginal 等），取不到才用文件时间
+      'ctime'-> 统一用文件创建时间（Windows 上为 st_ctime）
+    """
     ext = os.path.splitext(path)[1].lower()
     info = MediaInfo(path=path, ext=ext, kind=kind_of(path))
     info.shot_time = _file_time(path)
+    info.time_source = "filetime"   # 默认兜底；后续读到 EXIF/文件名/视频元数据会覆盖
     info.extra_frames = []          # type: ignore[attr-defined]
 
     try:
@@ -270,6 +360,20 @@ def probe(path: str, video_frames: bool = True) -> MediaInfo:
     except Exception as e:                      # 单个文件读失败不能影响整批
         info.error = f"{type(e).__name__}: {e}"
 
+    if date_source == "ctime":
+        # 强制使用文件创建时间（Windows 上为 st_ctime），忽略 EXIF / 文件名
+        info.shot_time = _create_time(path)
+        info.time_source = "ctime"
+        return info
+
+    # date_source == 'exif'（默认）：EXIF 优先，依次文件名兜底、最后文件时间兜底
+    if not info.shot_time:
+        ts, src = _name_time(path)
+        if ts:
+            info.shot_time, info.time_source = ts, src
     if not info.shot_time:
         info.shot_time = _file_time(path)
+        info.time_source = "filetime"
+    if not info.time_source:
+        info.time_source = "unknown" if not info.shot_time else info.time_source
     return info

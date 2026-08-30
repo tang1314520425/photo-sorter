@@ -6,9 +6,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import traceback
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -19,12 +21,12 @@ from PySide6.QtWidgets import (
     QPushButton, QLineEdit, QCheckBox, QSlider, QFrame, QTableWidget,
     QTableWidgetItem, QProgressBar, QFileDialog, QMessageBox, QDialog,
     QListWidget, QComboBox, QPlainTextEdit, QAbstractItemView, QHeaderView,
-    QInputDialog, QSizePolicy,
+    QInputDialog, QSizePolicy, QMenu, QDialogButtonBox,
 )
 
 from core.config import CategoryBook, Category, Settings, ALL_EXTS
 from core.classifier import Classifier, SemanticEngine
-from core.organizer import Organizer, scan_folder, list_undo_files, undo
+from core.organizer import Organizer, scan_folder, list_undo_files, undo, undo_upto
 
 APP_TITLE = "照片 / 视频 智能分类整理"
 
@@ -410,6 +412,19 @@ class MainWindow(QMainWindow):
         h1.addWidget(self.cmb_date_g)
 
         h1.addSpacing(10)
+        h1.addWidget(QLabel("日期来源"))
+        self.cmb_date_src = QComboBox()
+        for label, val in (("拍摄时间(EXIF)", "exif"), ("文件创建时间", "ctime")):
+            self.cmb_date_src.addItem(label, val)
+        self._set_combo(self.cmb_date_src, self.settings.date_source)
+        self.cmb_date_src.setFixedWidth(130)
+        self.cmb_date_src.setToolTip(
+            "拍摄时间(EXIF)：用照片本身记录的拍摄日期，从手机/相机/网盘复制来的照片最准；\n"
+            "文件创建时间：用 Windows 文件属性里的「创建时间」（通常是导入本机的时间）。"
+        )
+        h1.addWidget(self.cmb_date_src)
+
+        h1.addSpacing(10)
         self.cb_block = QCheckBox("时间板块（按时间分目录）")
         self.cb_block.setChecked(self.settings.time_block)
         self.cb_block.stateChanged.connect(self._sample)
@@ -479,11 +494,17 @@ class MainWindow(QMainWindow):
         self.b_stop.clicked.connect(self._stop)
         a.addWidget(self.b_stop)
         a.addStretch()
-        self.b_undo = QPushButton("撤销上次整理")
+        self.b_undo = QPushButton("撤销上一步")
         self.b_undo.setObjectName("danger")
         self.b_undo.setEnabled(False)
-        self.b_undo.clicked.connect(self._undo)
+        self.b_undo.clicked.connect(self._undo_last)
         a.addWidget(self.b_undo)
+        self.b_undo_hist = QPushButton("撤销到… ▾")
+        self.b_undo_hist.setObjectName("danger")
+        self.b_undo_hist.setEnabled(False)
+        self.undo_menu = QMenu(self)
+        self.b_undo_hist.setMenu(self.undo_menu)
+        a.addWidget(self.b_undo_hist)
         v.addLayout(a)
 
         # ---- 表格 ----
@@ -547,32 +568,32 @@ class MainWindow(QMainWindow):
     def _sample(self):
         keep = self.cb_keep.isChecked()
         block = self.cb_block.isChecked()
-        # 时间标签来源：期日编号（自动取创建时间）或 手动日期段
+
+        # 文件名上的日期段（手动日期段 或 按 date_granularity 自动取）
         if self.cb_date.isChecked():
             g = self.cmb_date_g.currentData()
-            tt = {"year": "2023", "month": "2023-05", "day": "2023-05-12"}.get(g, "2023")
+            fname_date = {"year": "2023", "month": "2023-05", "day": "2023-05-12"}.get(g, "2023")
         else:
-            tt = self.ed_date.text().strip()
+            fname_date = self.ed_date.text().strip()
 
-        # 文件名：勾时间板块时时间已体现在文件夹，文件名不再重复带日期
-        if block and tt:
-            fname = "人像01"
-        elif tt:
-            fname = f"人像{tt}-01"
+        # 文件夹名：勾时间板块时按 time_block_granularity（年→2023人像 / 月→2023-05人像）
+        if block:
+            bg = self.cmb_block_g.currentData()
+            tb = {"year": "2023", "month": "2023-05"}.get(bg, "2023")
+            folder = f"{tb}人像/"
+        else:
+            folder = "人像/"
+
+        # 文件名：始终带日期段（日期显示在图片本体上，便于同文件夹内不同月份照片区分）
+        if fname_date:
+            fname = f"人像{fname_date}-01"
         else:
             fname = "人像01"
         if keep:
             fname += "_IMG_2233"
 
-        # 文件夹：人像/  或  时间-人像/
-        if block and tt:
-            folder = f"{tt}-人像/"
-        elif block:
-            folder = "人像/  ⚠时间板块需填「日期段」或勾「期日编号」"
-        else:
-            folder = "人像/"
-
-        self.lb_sample.setText(f"示例：{folder}{fname}.jpg")
+        tail = "（日期显示在文件名上）" if fname_date else "（未设日期段：文件名不带日期）"
+        self.lb_sample.setText(f"示例：{folder}{fname}.jpg  {tail}")
 
     def _status(self, t, color=TEXT):
         self.lb_status.setText(t)
@@ -586,6 +607,7 @@ class MainWindow(QMainWindow):
         self.settings.min_confidence = self.sl.value() / 100.0
         self.settings.date_numbering = self.cb_date.isChecked()
         self.settings.date_granularity = self.cmb_date_g.currentData()
+        self.settings.date_source = self.cmb_date_src.currentData()
         self.settings.time_block = self.cb_block.isChecked()
         self.settings.time_block_granularity = self.cmb_block_g.currentData()
         self.settings.last_folder = self.folder
@@ -621,6 +643,7 @@ class MainWindow(QMainWindow):
         self.b_scan.setEnabled(True)
         self.b_run.setEnabled(False)
         self.b_undo.setEnabled(bool(list_undo_files(p)))
+        self._refresh_undo_menu()
         self.tb.setRowCount(0)
         self.items = []
         self._item_index = {}
@@ -670,6 +693,59 @@ class MainWindow(QMainWindow):
         self._status(f"识别完成，共 {len(self.items)} 个：{brief}　→ 核对无误后点「执行归档」", OKC)
         self.b_run.setEnabled(True)
 
+    # ------------------------------------------------------------------ 时间来源报告
+    def _time_report(self, items) -> bool:
+        """归档前弹窗：展示每张照片的拍摄时间来自哪里，让用户核对日期真实。
+
+        返回 False 表示用户取消（不归档）。
+        """
+        src_count: dict[str, int] = {}
+        for it in items:
+            k = it.time_source or "unknown"
+            src_count[k] = src_count.get(k, 0) + 1
+        label = {"exif": "EXIF 拍摄时间", "filename": "文件名解析日期", "filetime": "文件时间兜底",
+                 "ctime": "文件创建时间", "video_meta": "视频内置时间", "unknown": "无法获取"}
+        total = len(items)
+        lines = [f"共 {total} 个文件，时间来源分布："]
+        for k in ("exif", "filename", "video_meta", "filetime", "ctime", "unknown"):
+            if src_count.get(k):
+                lines.append(f"  · {label.get(k, k)}：{src_count[k]} 个")
+
+        # 需重点核对的（不是照片真实拍摄时间）
+        if self.settings.date_source == "exif":
+            watch = [it for it in items if it.time_source in ("filename", "filetime", "unknown")]
+        else:
+            watch = [it for it in items if it.time_source in ("filetime", "unknown")]
+        if watch:
+            lines.append("")
+            lines.append(f"⚠ 以下 {len(watch)} 个不是来自照片真实拍摄时间（EXIF），日期可能只是导入/复制时间，请重点核对：")
+            for it in watch[:300]:
+                dt = datetime.fromtimestamp(it.shot_time).strftime("%Y-%m-%d") if it.shot_time else "无"
+                lines.append(f"  · {os.path.basename(it.src)} → {dt}（{label.get(it.time_source, it.time_source)}）")
+            if len(watch) > 300:
+                lines.append(f"  … 还有 {len(watch) - 300} 个未列出")
+        else:
+            lines.append("")
+            lines.append("✓ 全部来自 EXIF 真实拍摄时间，日期可信。")
+        lines.append("")
+        lines.append("确认无误点「确认执行」；若发现日期不对，可改「日期来源」或先取消。")
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("时间来源核对（归档前）")
+        dlg.resize(660, 480)
+        v = QVBoxLayout(dlg)
+        v.addWidget(QLabel("归档前请先确认每张照片的「拍摄时间」来自哪里："))
+        te = QPlainTextEdit("\n".join(lines))
+        te.setReadOnly(True)
+        v.addWidget(te, 1)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText("确认执行")
+        bb.button(QDialogButtonBox.Cancel).setText("取消")
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        v.addWidget(bb)
+        return dlg.exec() == QDialog.Accepted
+
     # ------------------------------------------------------------------ 执行
     def _start_exec(self):
         if self.busy or not self.items or not self.organizer:
@@ -677,6 +753,9 @@ class MainWindow(QMainWindow):
         todo = [i for i in self.items if i.status == "待处理"]
         if not todo:
             QMessageBox.information(self, "无事可做", "没有待处理的文件。")
+            return
+        # —— 归档前：时间来源核对，确认每张照片的拍摄日期真实 ——
+        if not self._time_report(todo):
             return
         stat = {}
         for i in todo:
@@ -708,12 +787,12 @@ class MainWindow(QMainWindow):
     def _on_exec_done(self, rep):
         self._set_busy(False)
         self.b_run.setEnabled(False)
-        self.b_undo.setEnabled(bool(rep.undo_file))
+        self._refresh_undo_menu()
         self._status(f"归档完成：成功 {rep.moved}，跳过 {rep.skipped}，失败 {rep.failed}", OKC)
         lines = "\n".join(f"　{k} → {v} 个" for k, v in sorted(rep.by_category.items(), key=lambda x: -x[1]))
         detail = (
             f"成功 {rep.moved} 个，跳过 {rep.skipped} 个，失败 {rep.failed} 个。\n\n{lines}\n\n"
-            "原文件画质、格式、拍摄信息全部原样保留。\n不满意可点「撤销上次整理」还原。"
+            "原文件画质、格式、拍摄信息全部原样保留。\n不满意可点「撤销上一步」或「撤销到…」还原到任意一步。"
         )
         if rep.warning:
             detail += "\n\n⚠ " + rep.warning
@@ -733,20 +812,52 @@ class MainWindow(QMainWindow):
         self._status("正在停止…", WARNC)
 
     # ------------------------------------------------------------------ 撤销
-    def _undo(self):
+    def _refresh_undo_menu(self):
+        """刷新「撤销到…」菜单：列出最近最多 5 次归档记录，并可一键还原到任意一步之前。"""
+        self.undo_menu.clear()
+        files = list_undo_files(self.folder)[:5]   # 最多展示最近 5 次
+        self.b_undo_hist.setEnabled(bool(files))
+        self.b_undo.setEnabled(bool(files))
+        if not files:
+            return
+        for f in files:
+            try:
+                with open(f, "r", encoding="utf-8") as fh:
+                    moves = json.load(fh).get("moves", [])
+            except Exception:
+                moves = []
+            t = datetime.fromtimestamp(os.path.getmtime(f)).strftime("%m-%d %H:%M")
+            act = self.undo_menu.addAction(f"到 {t}（{len(moves)} 个）")
+            act.setData(f)
+            act.triggered.connect(lambda _checked=False, ff=f: self._undo_to(ff))
+
+    def _undo_last(self):
         files = list_undo_files(self.folder)
         if not files:
             QMessageBox.information(self, "没有记录", "这个文件夹没有可撤销的整理记录。")
             return
         latest = files[0]
-        if QMessageBox.question(self, "撤销",
-                                f"把上一次整理的文件全部搬回原位？\n\n记录：{os.path.basename(latest)}"
+        if QMessageBox.question(self, "撤销上一步",
+                                f"把最近一次整理的文件全部搬回原位？\n\n记录：{os.path.basename(latest)}"
                                 ) != QMessageBox.Yes:
             return
         ok, fail, errs = undo(latest)
         tip = f"已还原 {ok} 个，失败 {fail} 个。"
         if errs:
             tip += "\n\n" + "\n".join(errs[:10])
+        QMessageBox.information(self, "撤销完成", tip)
+        self._set_folder(self.folder)   # 内部会刷新菜单与按钮
+
+    def _undo_to(self, target_file: str):
+        if QMessageBox.question(self, "撤销到指定步",
+                                "将把这一次以及其后的所有整理，一次性还原到该步操作之前的状态？\n"
+                                "（按从新到旧顺序依次搬回，原文件画质不受影响）"
+                                ) != QMessageBox.Yes:
+            return
+        ok, fail, errs = undo_upto(self.folder, target_file)
+        tip = f"已还原 {ok} 个，失败 {fail} 个。"
+        if errs:
+            tip += "\n\n" + "\n".join(errs[:15])
         QMessageBox.information(self, "撤销完成", tip)
         self._set_folder(self.folder)
 
@@ -801,7 +912,7 @@ class MainWindow(QMainWindow):
             self.b_undo.setEnabled(False)
         else:
             self.pb.setValue(0)
-            self.b_undo.setEnabled(bool(self.folder) and bool(list_undo_files(self.folder)))
+            self._refresh_undo_menu()
 
     def _edit_cats(self):
         if self.busy:

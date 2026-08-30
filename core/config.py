@@ -117,6 +117,7 @@ class Settings:
     date_granularity: str = "day"     # 期日编号粒度：year / month / day（年 / 年-月 / 年-月-日）
     time_block: bool = False          # 时间板块：按时间把同类文件分到子目录（年 / 年-月）
     time_block_granularity: str = "year"  # 时间板块粒度：year / month
+    date_source: str = "exif"         # 命名日期来源：exif=拍摄时间(EXIF优先) / ctime=文件创建时间(Windows创建时间)
 
     @classmethod
     def load(cls, path: str = SETTINGS_FILE) -> "Settings":
