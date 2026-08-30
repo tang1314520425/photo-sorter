@@ -1,15 +1,14 @@
 # 照片 / 视频 智能分类整理（开源版）
 
 > [!WARNING]
-> **⚠️ Windows 离线版是「分卷压缩包」，必须下载全部分卷并合并后才能解压使用！**
+> **⚠️ Windows 离线版是「分片压缩包」，必须下载全部小片并合并后才能解压使用！**
 >
-> 受 GitHub 单文件上传限制，Release 中的 Windows 离线版（约 800MB，已内置 CLIP 模型权重，可断网运行）被拆成 **两个分卷** + 一个合并脚本：
-> - `photo-sorter-windows-v1.0.2-offline.z01`
-> - `photo-sorter-windows-v1.0.2-offline.z02`
+> 受 GitHub 单文件上传限制，Release 中的 Windows 离线版（约 800MB，已内置 CLIP 模型权重，可断网运行）被拆成 **39 个 20MB 小片** + 一个合并脚本：
+> - `photo-sorter-windows-v1.0.2-offline.zip.part00` … `photo-sorter-windows-v1.0.2-offline.zip.part38`（共 39 片，必须全部下载）
 > - `merge_parts.ps1`（合并脚本）
 >
-> **正确下载步骤**：把上面 **3 个文件全部下载到同一个文件夹** → 右键 `merge_parts.ps1` 选「使用 PowerShell 运行」→ 自动合并出完整的 `照片视频智能分类整理_windows_v1.0.2_offline.zip` → 解压即用（断网可用）。
-> **🚫 只下载其中任意一个分卷都无法解压或运行，务必全部下载！**
+> **正确下载步骤**：把上面 **全部 39 个小片 + `merge_parts.ps1`** 下载到同一个文件夹 → 右键 `merge_parts.ps1` 选「使用 PowerShell 运行」→ 自动按顺序拼接出完整的 `照片视频智能分类整理_windows_v1.0.2_offline.zip`（约 802MB，脚本会校验字节数）→ 解压即用（断网可用）。
+> **🚫 只少下载任意一片都无法合并或运行，务必全部下载！**
 
 把一个乱糟糟的照片 / 视频文件夹拖进来，它会看懂每一张图的内容，在**这个文件夹内部**建好类别子文件夹，把文件归位，并按 `类别 + 日期 + 序号` 重新编号。
 
