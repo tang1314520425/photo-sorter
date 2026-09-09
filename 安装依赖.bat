@@ -3,13 +3,14 @@ chcp 65001 >nul
 title 安装运行环境
 
 set "MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple"
-set "HF_ENDPOINT=https://hf-mirror.com"
+:: 允许覆盖镜像源
+if not defined HF_ENDPOINT set "HF_ENDPOINT=https://hf-mirror.com"
 set "PYEXE="
 
 :: 1) 便携 venv
 if exist "%~dp0venv\Scripts\python.exe" set "PYEXE=%~dp0venv\Scripts\python.exe"
-:: 2) 本机 WorkBuddy venv（仅 TJM 机器，保留回退）
-if not defined PYEXE if exist "C:\Users\TJM\.workbuddy\binaries\python\envs\photosort\Scripts\python.exe" set "PYEXE=C:\Users\TJM\.workbuddy\binaries\python\envs\photosort\Scripts\python.exe"
+:: 2) 本机 WorkBuddy venv（%USERPROFILE% 适配任意用户名，保留回退）
+if not defined PYEXE if exist "%USERPROFILE%\.workbuddy\binaries\python\envs\photosort\Scripts\python.exe" set "PYEXE=%USERPROFILE%\.workbuddy\binaries\python\envs\photosort\Scripts\python.exe"
 :: 3) 系统 Python
 if not defined PYEXE (
   for /f "delims=" %%i in ('where py 2^>nul') do ( set "PYEXE=%%i" & goto :havepy )
@@ -54,7 +55,7 @@ if errorlevel 1 goto :fail
 
 echo.
 echo 正在预下载视觉模型（约 600MB，只需一次，之后永久离线可用）...
-"%PYEXE%" -c "import os;os.environ['HF_ENDPOINT']='https://hf-mirror.com';import open_clip;open_clip.create_model_and_transforms('ViT-B-32',pretrained='laion2b_s34b_b79k');print('模型就绪')"
+"%PYEXE%" -c "import os;os.environ.setdefault('HF_ENDPOINT','https://hf-mirror.com');import open_clip;open_clip.create_model_and_transforms('ViT-B-32',pretrained='laion2b_s34b_b79k');print('模型就绪')"
 
 :qt
 echo.

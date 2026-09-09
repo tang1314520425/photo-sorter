@@ -101,6 +101,36 @@ class CategoryBook:
         return names
 
 
+def _coerce(field_name: str, want: type, got):
+    """把配置值纠正成该字段应有的类型；纠不回来就退回默认值。
+
+    宁可让一项设置回到默认，也不能让程序带着一个错类型的值跑下去。
+    """
+    default = Settings().__getattribute__(field_name)
+    try:
+        if want is bool:
+            if isinstance(got, bool):
+                return got
+            if isinstance(got, str):
+                return got.strip().lower() in ("1", "true", "yes", "on", "是")
+            return bool(got)
+        if want is float:
+            return float(got)
+        if want is int:
+            return int(got)
+        if want is str:
+            return default if got is None else str(got)
+        if want is list:
+            if isinstance(got, list):
+                return got
+            if isinstance(got, str):        # 单路径当成长度 1 的列表，别丢用户的设置
+                return [got] if got.strip() else []
+            return list(default)
+    except (TypeError, ValueError):
+        return default
+    return got
+
+
 @dataclass
 class Settings:
     """界面上的运行参数，会记住上次选择。"""
@@ -119,26 +149,58 @@ class Settings:
     time_block_granularity: str = "year"  # 时间板块粒度：year / month
     date_source: str = "exif"         # 命名日期来源：exif=拍摄时间(EXIF优先) / ctime=文件创建时间(Windows创建时间)
 
+    # —— 语义识别开关（2026-09-02）——
+    use_ai: bool = True               # 关掉则只按规则整理（动图/截图/视频），不加载视觉模型，省内存省时间
+
+    # —— 模式（2026-09-03）——
+    mode: str = "organize"            # organize=归类整理（移入分类文件夹）/ inplace=原位重命名（只改名不移动）
+    inplace_date_granularity: str = "year"   # 原位重命名日期粒度：year（2023.风景.01）/ ymd（2023.08.15.风景.01）
+    scan_roots: list[str] = field(default_factory=list)   # 原位重命名模式勾选的扫描根目录
+
     @classmethod
     def load(cls, path: str = SETTINGS_FILE) -> "Settings":
+        """读设置。文件损坏要明说，不能悄悄回默认——否则用户只会觉得「程序忘了我的设置」。"""
         if not os.path.isfile(path):
             return cls()
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            base = cls()
-            for k, v in data.items():
-                if hasattr(base, k):
-                    setattr(base, k, v)
-            return base
-        except Exception:
-            return cls()
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"设置文件已损坏（{os.path.basename(path)} 第 {e.lineno} 行：{e.msg}）"
+            ) from e
+        except UnicodeDecodeError as e:
+            raise ValueError(f"设置文件编码异常（{os.path.basename(path)}）：{e}") from e
+        except OSError as e:
+            raise ValueError(f"设置文件读不出来（{os.path.basename(path)}）：{e}") from e
+        if not isinstance(data, dict):
+            raise ValueError(f"设置文件格式不对（{os.path.basename(path)}），本该是键值对的")
+        base = cls()
+        # 逐字段校验类型。settings.json 是明文，用户手改过、或者从旧版本
+        # 升级上来时字段类型可能不对（比如 min_confidence 变成字符串、
+        # scan_roots 变成单个路径字符串）。以前是直接塞进去，
+        # 结果要等到真正用到那一刻才崩，而且崩在莫名其妙的地方。
+        for k, v in data.items():
+            if not hasattr(base, k):
+                continue
+            setattr(base, k, _coerce(k, type(getattr(base, k)), v))
+        return base
 
     def save(self, path: str = SETTINGS_FILE) -> None:
+        """写设置。失败一律往上抛，交给界面提示，绝不静默吞掉。
+
+        以前这里是 except Exception: pass，磁盘满 / 目录只读 / 杀软拦截时用户毫无察觉，
+        下次启动发现设置全回默认，还以为是程序有毛病。
+        """
+        tmp = path + ".tmp"
         try:
-            tmp = path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(asdict(self), f, ensure_ascii=False, indent=2)
             os.replace(tmp, path)
         except Exception:
-            pass
+            try:                       # 写坏一半的临时文件要清掉，别留垃圾
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except OSError:
+                pass
+            raise

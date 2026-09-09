@@ -2,14 +2,15 @@
 chcp 65001 >nul
 title 照片视频智能分类整理
 
-set "HF_ENDPOINT=https://hf-mirror.com"
+:: 允许用户用环境变量覆盖镜像源（如海外机器改用官方源）
+if not defined HF_ENDPOINT set "HF_ENDPOINT=https://hf-mirror.com"
 set "PYTHONUTF8=1"
 set "PYEXE="
 
 :: 1) 便携 venv（与脚本同目录的 venv）
 if exist "%~dp0venv\Scripts\pythonw.exe" set "PYEXE=%~dp0venv\Scripts\pythonw.exe"
-:: 2) 本机 WorkBuddy 专用 venv（仅 TJM 这台机器有效，保留作回退，不影响其他用户）
-if not defined PYEXE if exist "C:\Users\TJM\.workbuddy\binaries\python\envs\photosort\Scripts\pythonw.exe" set "PYEXE=C:\Users\TJM\.workbuddy\binaries\python\envs\photosort\Scripts\pythonw.exe"
+:: 2) 本机 WorkBuddy 专用 venv（%USERPROFILE% 适配任意用户名，保留作回退）
+if not defined PYEXE if exist "%USERPROFILE%\.workbuddy\binaries\python\envs\photosort\Scripts\pythonw.exe" set "PYEXE=%USERPROFILE%\.workbuddy\binaries\python\envs\photosort\Scripts\pythonw.exe"
 :: 3) 系统 Python
 if not defined PYEXE (
   where pythonw >nul 2>&1 && set "PYEXE=pythonw"

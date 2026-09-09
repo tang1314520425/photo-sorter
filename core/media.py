@@ -90,9 +90,11 @@ def _exif_time_pil(img: Image.Image) -> tuple[float, str]:
             if raw:
                 s = str(raw).strip().replace("/", ":")
                 try:
-                    return datetime.strptime(s[:19], "%Y:%m:%d %H:%M:%S").timestamp(), "exif"
+                    ts = safe_timestamp(datetime.strptime(s[:19], "%Y:%m:%d %H:%M:%S"))
                 except ValueError:
                     continue
+                if ts:                     # 0000:00:00 这类空日期要跳过，别当成有效时间
+                    return ts, "exif"
     except Exception:
         pass
     return 0.0, ""
@@ -110,9 +112,11 @@ def _exif_time_exifread(path: str) -> tuple[float, str]:
             if raw:
                 s = str(raw).strip().replace("/", ":")
                 try:
-                    return datetime.strptime(s[:19], "%Y:%m:%d %H:%M:%S").timestamp(), "exif"
+                    ts = safe_timestamp(datetime.strptime(s[:19], "%Y:%m:%d %H:%M:%S"))
                 except ValueError:
                     continue
+                if ts:
+                    return ts, "exif"
     except Exception:
         pass
     return 0.0, ""
@@ -125,7 +129,12 @@ _NAME_PATTERNS = [
 
 
 def _name_time(path: str) -> tuple[float, str]:
-    """从文件名解析拍摄日期（手机原文件名常自带日期），作为 EXIF 缺失时的兜底。"""
+    """从文件名解析拍摄日期（手机原文件名常自带日期），作为 EXIF 缺失时的兜底。
+
+    注意：datetime(...).timestamp() 在 Windows 上遇到 1970 年之前（或远超 9999 年）的
+    日期会抛 OSError，而不是 ValueError。只捕获 ValueError 会让异常一路传播出 probe()，
+    导致「整个批次扫描直接崩掉」。所以这里必须三个都接住。
+    """
     base = os.path.splitext(os.path.basename(path))[0]
     for pat in _NAME_PATTERNS:
         m = pat.search(base)
@@ -135,12 +144,36 @@ def _name_time(path: str) -> tuple[float, str]:
         try:
             if len(g) >= 6:
                 y, mo, d, h, mi, s = (int(x) for x in g[:6])
-                return datetime(y, mo, d, h, mi, s).timestamp(), "filename"
-            y, mo, d = (int(x) for x in g[:3])
-            return datetime(y, mo, d).timestamp(), "filename"
-        except ValueError:
+                dt = datetime(y, mo, d, h, mi, s)
+            else:
+                y, mo, d = (int(x) for x in g[:3])
+                dt = datetime(y, mo, d)
+            return safe_timestamp(dt), "filename"
+        except (ValueError, OSError, OverflowError):
             continue
     return 0.0, ""
+
+
+def safe_timestamp(dt: datetime) -> float:
+    """datetime → 时间戳，越界（Windows 上 1970 年前 / 9999 年后会抛错）时返回 0。
+
+    文件名里什么数字都可能出现（IMG_00011231、扫描件 99991232），
+    不能让一个畸形日期把整批扫描搞崩。
+    """
+    try:
+        return dt.timestamp()
+    except (ValueError, OSError, OverflowError):
+        return 0.0
+
+
+def safe_datetime(ts: float) -> datetime | None:
+    """时间戳 → datetime，越界时返回 None（调用方按「取不到时间」处理）。"""
+    if not ts:
+        return None
+    try:
+        return datetime.fromtimestamp(ts)
+    except (ValueError, OSError, OverflowError):
+        return None
 
 
 _VIDEO_CREATION_RE = re.compile(
@@ -194,28 +227,53 @@ def _read_image(path: str, info: MediaInfo) -> None:
 # RAW
 # --------------------------------------------------------------------------- #
 def _read_raw(path: str, info: MediaInfo) -> None:
+    # RAW 里同样藏着完整的 EXIF（拍摄时间）。以前这里根本没读，
+    # 导致 .CR2/.NEF/.ARW/.DNG 全部退化成「文件修改时间」——
+    # 相机里设好了日期却用不上，整理完的照片年份全是错的。
+    try:
+        ts, src = _exif_time_exifread(path)
+        if ts:
+            info.shot_time, info.time_source = ts, src
+    except Exception:
+        pass
+
     try:
         import rawpy
     except ImportError:
         info.error = "未安装 rawpy，RAW 只按规则归类"
         return
 
-    with rawpy.imread(path) as raw:        # 只读
-        # 优先取相机内嵌的 JPEG 预览图，毫秒级，不解 RAW
-        try:
-            thumb = raw.extract_thumb()
-            if thumb.format == rawpy.ThumbFormat.JPEG:
-                img = Image.open(io.BytesIO(thumb.data))
-                img = _to_rgb(img)
-            else:
-                img = Image.fromarray(thumb.data)
-        except Exception:
-            rgb = raw.postprocess(half_size=True, use_camera_wb=True, no_auto_bright=False)
-            img = Image.fromarray(rgb)
-        try:
-            info.width, info.height = raw.sizes.width, raw.sizes.height
-        except Exception:
-            info.width, info.height = img.size
+    img: Image.Image | None = None          # 兜底定义：下面两条路都失败时不会抛 UnboundLocalError
+    try:
+        with rawpy.imread(path) as raw:     # 只读
+            # 优先取相机内嵌的 JPEG 预览图，毫秒级，不解 RAW
+            try:
+                thumb = raw.extract_thumb()
+                if thumb.format == rawpy.ThumbFormat.JPEG:
+                    img = Image.open(io.BytesIO(thumb.data))
+                    img = _to_rgb(img)
+                else:
+                    img = Image.fromarray(thumb.data)
+            except Exception:
+                try:
+                    rgb = raw.postprocess(half_size=True, use_camera_wb=True,
+                                          no_auto_bright=False)
+                    img = Image.fromarray(rgb)
+                except Exception as e:
+                    info.error = f"RAW 解码失败：{type(e).__name__}"
+            try:
+                info.width, info.height = raw.sizes.width, raw.sizes.height
+            except Exception:
+                if img is not None:
+                    info.width, info.height = img.size
+    except Exception as e:
+        info.error = info.error or f"RAW 读取失败：{type(e).__name__}: {e}"
+
+    if img is None:
+        # 缩略图拿不到（很常见：rawpy 不支持的机型/损坏文件），
+        # 但 EXIF 时间已经取到了，照样能正确归类命名，只是没有画面可识别。
+        info.error = info.error or "RAW 无法解码出预览图，按规则归类"
+        return
 
     img.thumbnail((THUMB_SIZE, THUMB_SIZE), Image.Resampling.BILINEAR)
     info.thumb = img
@@ -272,9 +330,11 @@ def _probe_video(exe: str, path: str, info: MediaInfo) -> None:
                 sign = 1 if tz[0] == "+" else -1
                 hh = int(tz[1:3]); mm = int(tz[4:6]) if len(tz) >= 6 else 0
                 dt = dt.replace(tzinfo=timezone(sign * timedelta(hours=hh, minutes=mm))).astimezone()
-            info.shot_time = dt.timestamp()
-            info.time_source = "video_meta"
-        except ValueError:
+            ts = safe_timestamp(dt)      # 越界日期（0000-00-00 等）不能让整批扫描崩掉
+            if ts:
+                info.shot_time = ts
+                info.time_source = "video_meta"
+        except (ValueError, OSError, OverflowError):
             pass
     for line in err.splitlines():
         if "Video:" in line:
@@ -366,14 +426,33 @@ def probe(path: str, video_frames: bool = True, date_source: str = "exif") -> Me
         info.time_source = "ctime"
         return info
 
-    # date_source == 'exif'（默认）：EXIF 优先，依次文件名兜底、最后文件时间兜底
-    if not info.shot_time:
-        ts, src = _name_time(path)
-        if ts:
-            info.shot_time, info.time_source = ts, src
-    if not info.shot_time:
-        info.shot_time = _file_time(path)
-        info.time_source = "filetime"
-    if not info.time_source:
-        info.time_source = "unknown" if not info.shot_time else info.time_source
+    # date_source == 'exif'（默认）：EXIF/视频内部元数据 优先 → 文件名自带日期 → 文件时间
+    #
+    # 注意：进到这里时 shot_time 已被第 346 行预置成文件时间（必然非空），
+    # 所以绝不能用 `if not info.shot_time` 来判断「还没拿到拍摄时间」，
+    # 否则文件名兜底永远轮不到 —— 视频尤其明显：VID_20220815.mp4 这类
+    # 相机原名自带的日期会被跳过，退化成文件系统的修改时间。
+    # 这里改为按 time_source 判断：只有尚未拿到 exif / video_meta 时才走文件名。
+    # 整个兜底链都必须在 try 里：这一段在 try(文件读取) 之外，
+    # 只要有一行抛异常，就会一路崩到调用方，让「整批扫描」挂掉。
+    # 宁可退化成文件时间，也绝不能因为一个畸形文件名中断整批任务。
+    try:
+        if info.time_source not in ("exif", "video_meta"):
+            ts, src = _name_time(path)  # 手机/相机原名常自带拍摄日期，优先于文件系统时间
+            if ts:
+                info.shot_time, info.time_source = ts, src
+        if info.time_source in ("", "filetime"):
+            if not info.shot_time:
+                info.shot_time = _file_time(path)
+            info.time_source = info.time_source or "filetime"
+        if not info.shot_time:
+            info.time_source = "unknown"
+    except Exception as e:              # 兜底失败也要能返回，只是时间来源退化为文件时间
+        info.error = info.error or f"时间解析异常：{type(e).__name__}: {e}"
+        if not info.shot_time:
+            try:
+                info.shot_time = _file_time(path)
+                info.time_source = "filetime"
+            except Exception:
+                info.time_source = "unknown"
     return info

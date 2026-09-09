@@ -22,6 +22,12 @@
       ]
     },
     {
+      "name": "视频",
+      "enabled": true,
+      "rule": "video",
+      "prompts": []
+    },
+    {
       "name": "证件票据",
       "enabled": true,
       "rule": null,

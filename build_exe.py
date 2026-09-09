@@ -18,10 +18,38 @@ import subprocess
 import sys
 
 
+# 只允许删除脚本自己生成的产物；任何其它路径一律拒绝，避免误删用户文件。
+_ALLOWED_REMOVE_ROOTS = [
+    os.path.normpath(os.path.join(SRC_DIR, "build")),
+    os.path.normpath(os.path.join(SRC_DIR, "dist")),
+    os.path.normpath(OUT_DIR),
+    os.path.normpath(os.path.join(SRC_DIR, "dist_release")),
+]
+
+
+def _safe_to_remove(path: str) -> bool:
+    p = os.path.normpath(os.path.abspath(path))
+    for root in _ALLOWED_REMOVE_ROOTS:
+        try:
+            if os.path.commonpath([p, root]) == root:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def _force_remove(path: str) -> None:
-    """绕过沙箱 safe-delete 拦截，物理删除文件/目录。"""
+    """绕过沙箱 safe-delete 拦截，物理删除「脚本自身产物」文件/目录。
+
+    越白名单（build / dist / 发布目录之外的任意路径）直接拒绝并退出，
+    防止 SRC_DIR / OUT_DIR 计算异常时误删用户真实文件。
+    """
     if not os.path.exists(path):
         return
+    if not _safe_to_remove(path):
+        print("!! 拒绝删除越界路径（疑似配置错误）：", path)
+        print("   本脚本只允许删除自身生成的 build/ dist/ 发布目录。")
+        sys.exit(2)
     kernel32 = ctypes.windll.kernel32
     SetFileAttributesW = kernel32.SetFileAttributesW
     DeleteFileW = kernel32.DeleteFileW
@@ -53,14 +81,34 @@ APP_NAME = "照片视频智能分类整理"
 with open(os.path.join(SRC_DIR, "VERSION"), encoding="utf-8") as _f:
     VERSION = _f.read().strip()
 
-# CLIP 权重（约 600MB）。本机已下载，打进 exe 的 models/ 目录。
-# 其它机器：改成你本地下载好的 open_clip_model.safetensors 绝对路径。
-WEIGHTS_SRC = (
-    r"C:\Users\TJM\.cache\huggingface\hub"
-    r"\models--laion--CLIP-ViT-B-32-laion2B-s34B-b79K"
-    r"\snapshots\1a25a446712ba5ee05982a381eed697ef9b435cf"
-    r"\open_clip_model.safetensors"
-)
+def _find_weights() -> str:
+    """定位 CLIP 权重文件，按优先级：
+
+    1. 环境变量 PHOTO_SORTER_WEIGHTS（显式指定，任何机器都可用）
+    2. 自动探测 HuggingFace 缓存目录中的 open_clip_model.safetensors
+    3. 本机硬编码兜底路径（仅 TJM 本机有效，其它机器请改用前两种方式）
+    """
+    env = os.environ.get("PHOTO_SORTER_WEIGHTS")
+    if env and os.path.isfile(env):
+        return env
+
+    hf_cache = os.environ.get("HF_HOME") or os.path.join(
+        os.path.expanduser("~"), ".cache", "huggingface", "hub"
+    )
+    if os.path.isdir(hf_cache):
+        found = []
+        for root, _dirs, files in os.walk(hf_cache):
+            if "open_clip_model.safetensors" in files:
+                found.append(os.path.join(root, "open_clip_model.safetensors"))
+        if found:
+            return found[0]
+
+    return (
+        r"C:\Users\TJM\.cache\huggingface\hub"
+        r"\models--laion--CLIP-ViT-B-32-laion2B-s34B-b79K"
+        r"\snapshots\1a25a446712ba5ee05982a381eed697ef9b435cf"
+        r"\open_clip_model.safetensors"
+    )
 
 
 def run(cmd):
@@ -74,9 +122,11 @@ def run(cmd):
 def main():
     os.chdir(SRC_DIR)
 
-    if not os.path.exists(WEIGHTS_SRC):
-        print("!! 未找到本机 CLIP 权重:", WEIGHTS_SRC)
-        print("   请先下载权重并修改本文件顶部的 WEIGHTS_SRC 为你本机路径。")
+    WEIGHTS_SRC = _find_weights()
+    if not os.path.isfile(WEIGHTS_SRC):
+        print("!! 未找到 CLIP 权重:", WEIGHTS_SRC)
+        print("   请设置环境变量 PHOTO_SORTER_WEIGHTS 指向本机 open_clip_model.safetensors，")
+        print("   或确保 HuggingFace 缓存中存在该权重（运行一次 SemanticEngine 即可下载）。")
         sys.exit(1)
     print("权重文件:", WEIGHTS_SRC, round(os.path.getsize(WEIGHTS_SRC) / 1024 / 1024), "MB")
 

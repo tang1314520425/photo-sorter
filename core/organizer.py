@@ -22,10 +22,39 @@ from datetime import datetime
 
 from .config import ALL_EXTS, CategoryBook, Settings
 from .classifier import Classifier
-from .media import probe
+from .media import probe, safe_datetime
 
 UNDO_DIR = ".photo_sorter_undo"
-_SKIP_DIRS = {UNDO_DIR, "$RECYCLE.BIN", "System Volume Information", ".git", "__pycache__"}
+MARKER_FILE = ".photo_sorter_marker"   # 程序自建类别文件夹的隐藏标记，供 _looks_like_our_dir 可靠识别
+
+# 扫描时必须跳过的目录。
+# 前 5 个是原有的（程序自己的撤销目录 + 回收站 + 系统卷信息 + 版本控制 + 缓存）；
+# 后面这些是补上的：用户可能直接把 C:\ 或 D:\ 整个盘当作扫描根目录，
+# 不剪枝就会一头扎进 Windows\WinSxS、Program Files、AppData、node_modules，
+# 几十万文件扫到天荒地老，还会撞权限错误和杀软告警。
+_SKIP_DIRS = {
+    UNDO_DIR, "$RECYCLE.BIN", "System Volume Information", ".git", "__pycache__",
+    # Windows 系统目录
+    "Windows", "System32", "SysWOW64", "WinSxS", "ProgramData",
+    "Program Files", "Program Files (x86)", "AppData", "Recovery",
+    "$Windows.~BT", "$Windows.~WS", "PerfLogs", "Programme",
+    # 开发依赖 / 缓存目录（照片基本不可能在这里）
+    "node_modules", ".venv", "venv", "site-packages", ".gradle", ".m2",
+    ".cache", ".npm", ".conda", "dist-info", "__MACOSX",
+}
+
+# 盘符根目录扫描时的额外告警名单：命中就提示用户「这个目录不适合整盘扫描」
+_WARN_ROOTS = {"Windows", "Program Files", "Program Files (x86)",
+               "ProgramData", "AppData", "System32"}
+
+# 小写副本：Windows 目录名大小写不固定（回收站实际叫 $Recycle.Bin，
+# 而清单里写的是 $RECYCLE.BIN），按原名精确比对会漏掉，剪枝形同虚设。
+_SKIP_DIRS_LC = {s.lower() for s in _SKIP_DIRS}
+
+
+def should_skip_dir(name: str) -> bool:
+    """目录剪枝判断（大小写不敏感）。"""
+    return name.lower() in _SKIP_DIRS_LC or name.startswith(".")
 
 
 @dataclass
@@ -79,7 +108,7 @@ def scan_folder(root: str, book: CategoryBook, recursive: bool = False) -> list[
         # 剪枝：已生成的类别文件夹（含「时间-类别」格式）、隐藏目录、系统目录都不进
         dirnames[:] = [
             d for d in dirnames
-            if d not in _SKIP_DIRS and not d.startswith(".")
+            if not should_skip_dir(d)
             and not _looks_like_our_dir(os.path.join(dirpath, d), d, cat_names)
         ]
         if rel != "." and _looks_like_our_dir(dirpath, os.path.basename(dirpath), cat_names):
@@ -93,7 +122,11 @@ def scan_folder(root: str, book: CategoryBook, recursive: bool = False) -> list[
 # --------------------------------------------------------------------------- #
 # 命名
 # --------------------------------------------------------------------------- #
-_INVALID = re.compile(r'[\\/:*?"<>|]')
+_INVALID = re.compile(r'[\\/:*?"<>|\x00-\x1f]')   # Windows 非法字符，补上控制字符 0x00-0x1F
+# Windows 保留设备名：单独拿来做文件名会创建失败（CON.txt 也算，所以只判断主干部分）
+_RESERVED = ({"CON", "PRN", "AUX", "NUL"}
+             | {f"COM{i}" for i in range(1, 10)}
+             | {f"LPT{i}" for i in range(1, 10)})
 
 
 def _looks_like_our_dir(dirpath: str, name: str, cat_names: set[str]) -> bool:
@@ -106,6 +139,12 @@ def _looks_like_our_dir(dirpath: str, name: str, cat_names: set[str]) -> bool:
     n = (name or "").strip().lower()
     if not n:
         return False
+
+    # 最可靠的依据：程序生成类别文件夹时会放一个隐藏标记文件。
+    # 只在「目录名也确实匹配某个类别」时才采信，避免误伤用户自建的同名目录。
+    if os.path.exists(os.path.join(dirpath, MARKER_FILE)):
+        return n in cat_names or any(n == c or n.endswith(c) for c in cat_names)
+
     base = n if n in cat_names else None
     if base is None:
         for c in cat_names:
@@ -125,6 +164,52 @@ def _looks_like_our_dir(dirpath: str, name: str, cat_names: set[str]) -> bool:
     return False
 
 
+def _set_hidden(path: str) -> None:
+    """把文件/文件夹设成隐藏（仅 Windows 有效，其它系统静默跳过）。"""
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetFileAttributesW(path, 0x02)
+    except Exception:
+        pass
+
+
+def _mark_our_dir(folder: str) -> None:
+    """在程序自己建的类别文件夹里放一个隐藏标记，供下次扫描可靠识别。
+
+    为什么需要它：只靠「目录名 + 文件名格式」猜，会把用户自建的同名文件夹
+    （比如叫「2023人像」的旅行相册，里面恰好有「人像01.jpg」）误判成程序产物，
+    整个目录被跳过，照片就漏整理了。
+    """
+    try:
+        p = os.path.join(folder, MARKER_FILE)
+        if os.path.exists(p):
+            return
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(f"由「照片/视频智能分类整理」生成于 {datetime.now():%Y-%m-%d %H:%M:%S}\n")
+        _set_hidden(p)
+    except OSError:
+        pass      # 标记写不进去也不影响整理，下次退回按名字+文件名格式判断
+
+
+def _cleanup_empty_dirs(dirpath: str) -> None:
+    """撤销后：只有标记、且已被搬空的目录，删掉它，尽量回到整理前的样子。
+
+    绝不碰用户自己的目录——没有标记，或里面还有任何别的文件，一律不动。
+    """
+    try:
+        if not os.path.isdir(dirpath):
+            return
+        marker = os.path.join(dirpath, MARKER_FILE)
+        if not os.path.exists(marker):
+            return
+        if [e.name for e in os.scandir(dirpath) if e.name != MARKER_FILE]:
+            return                       # 还有别的文件，不动
+        os.remove(marker)
+        os.rmdir(dirpath)
+    except OSError:
+        pass
+
+
 # --------------------------------------------------------------------------- #
 # 时间 → 命名片段
 # --------------------------------------------------------------------------- #
@@ -138,7 +223,9 @@ def date_segment(ts: float, granularity: str) -> str:
     """
     if not ts:
         return ""
-    dt = datetime.fromtimestamp(ts)
+    dt = safe_datetime(ts)
+    if dt is None:                 # 时间戳越界（1970 年前 / 9999 年后）→ 退化成不带日期，绝不让整批崩
+        return ""
     if granularity == "year":
         return f"{dt.year}"
     if granularity == "month":
@@ -147,7 +234,10 @@ def date_segment(ts: float, granularity: str) -> str:
 
 
 def sanitize(name: str) -> str:
-    return _INVALID.sub("_", name).strip().strip(".") or "未命名"
+    s = _INVALID.sub("_", name).strip().strip(".") or "未命名"
+    if s.split(".")[0].upper() in _RESERVED:
+        s = "_" + s          # 撞上 Windows 保留设备名，加个下划线就能正常创建
+    return s
 
 
 class Namer:
@@ -310,12 +400,16 @@ class Organizer:
             if self.stop_flag.is_set():
                 break
             try:
-                if os.path.abspath(it.src) == os.path.abspath(it.dst):
+                if Organizer._same_file(it.src, it.dst):
                     it.status, it.detail = "跳过", "已在目标位置"
                     rep.skipped += 1
                 else:
                     folder = os.path.dirname(it.dst)
+                    # 只给「这次新建出来」的文件夹打标记，绝不往用户已有的目录里塞东西
+                    fresh = not os.path.isdir(folder)
                     os.makedirs(folder, exist_ok=True)
+                    if fresh:
+                        _mark_our_dir(folder)
                     self._safe_move(it.src, it.dst)
                     it.status = "已完成"
                     rep.moved += 1
@@ -341,6 +435,18 @@ class Organizer:
         return rep
 
     @staticmethod
+    def _same_file(a: str, b: str) -> bool:
+        """Windows 文件系统不区分大小写，'A.jpg' 和 'a.jpg' 是同一个文件。
+
+        只比字符串会把它当成「目标已存在」而拒绝，
+        结果一个只想改改文件名大小写的操作被误判成覆盖风险。
+        """
+        try:
+            return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+        except Exception:
+            return a == b
+
+    @staticmethod
     def _safe_move(src: str, dst: str) -> None:
         """只做移动，不做任何内容层面的操作。目标已存在 → 直接抛错，绝不覆盖。
 
@@ -348,8 +454,18 @@ class Organizer:
         关键安全约束：除「跨设备」错误外，任何其它错误（权限/占用/竞态产生的
         文件已存在）一律向上抛，绝不落到 copy2 覆盖分支，守住「绝不覆盖」铁律。
         """
-        if os.path.exists(dst):
+        if os.path.exists(dst) and not Organizer._same_file(src, dst):
             raise FileExistsError(f"目标已存在，拒绝覆盖：{dst}")
+        if Organizer._same_file(src, dst):
+            # 只是同一个文件改个大小写：Windows 上 rename 直接改就行，
+            # 其它平台先借一个临时名中转，避免被当成「覆盖自己」。
+            if os.name == "nt":
+                os.rename(src, dst)
+                return
+            tmp = dst + ".__casefix__"
+            os.rename(src, tmp)
+            os.rename(tmp, dst)
+            return
         try:
             os.rename(src, dst)          # 同盘：原子操作，零拷贝、零重编码
         except FileExistsError:
@@ -365,15 +481,32 @@ class Organizer:
             # 跨盘：字节级复制 + 保留时间戳，仍然不改内容
             shutil.copy2(src, dst)
             if os.path.getsize(src) != os.path.getsize(dst):
+                # 清掉不完整的副本；删不掉就改名成 .partial。
+                # 否则它会一直卡在那儿被当成「目标已存在」，让这个文件永远搬不过去。
+                leftover = ""
                 try:
                     os.remove(dst)
                 except OSError:
-                    pass
-                raise IOError("复制后大小不一致，已回滚")
+                    try:
+                        leftover = dst + ".partial"
+                        os.replace(dst, leftover)
+                    except OSError:
+                        leftover = dst
+                raise IOError(
+                    "复制后大小不一致，已回滚"
+                    + (f"；残留文件已改名为 {os.path.basename(leftover)}，请手动删除"
+                       if leftover else "")
+                )
             os.remove(src)
 
     @staticmethod
-    def _write_undo(root: str, log: list[dict]) -> str:
+    def _write_undo(root: str, log: list[dict], kind: str = "organize") -> str:
+        """写撤销记录。
+
+        kind 用来区分这条记录是「归类整理」还是「原位重命名」产生的。
+        两种模式的记录可能混在同一个根目录里，撤销时必须按模式分开取，
+        否则在原地模式点一下撤销，会把以前归类整理那次的移动一起撤掉。
+        """
         d = os.path.join(root, UNDO_DIR)
         os.makedirs(d, exist_ok=True)
         try:
@@ -382,14 +515,15 @@ class Organizer:
         except Exception:
             pass
         # 同一秒内连续归档也要各存一份，绝不互相覆盖，否则撤销会丢记录
-        stamp = f"{datetime.now():%Y%m%d_%H%M%S}"
+        stamp = f"{datetime.now():%Y%m%d_%H%M%S_%f}"   # 毫秒级：同一秒内连续归档也各有各的记录
         p = os.path.join(d, f"undo_{stamp}.json")
         n = 1
         while os.path.exists(p):
             p = os.path.join(d, f"undo_{stamp}_{n:02d}.json")
             n += 1
         with open(p, "w", encoding="utf-8") as f:
-            json.dump({"time": time.time(), "root": root, "moves": log}, f, ensure_ascii=False, indent=1)
+            json.dump({"time": time.time(), "root": root, "kind": kind, "moves": log},
+                      f, ensure_ascii=False, indent=1)
         # 只保留最近 5 次撤销记录，更旧的自动清理，避免无限堆积
         try:
             all_u = list_undo_files(root)
@@ -406,11 +540,28 @@ class Organizer:
 # --------------------------------------------------------------------------- #
 # 撤销
 # --------------------------------------------------------------------------- #
-def list_undo_files(root: str) -> list[str]:
+def undo_kind_of(path: str) -> str:
+    """读出这条撤销记录属于哪种模式。旧版本写的记录没有 kind 字段，
+    一律按 'organize' 处理——因为原位重命名模式是后来才加的，历史记录必然来自归类整理。"""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return str(json.load(f).get("kind") or "organize")
+    except Exception:
+        return "organize"
+
+
+def list_undo_files(root: str, kind: str | None = None) -> list[str]:
+    """列出某根目录的撤销记录（新→旧）。
+
+    kind=None  → 全部
+    kind='organize' / 'inplace' → 只要该模式产生的，避免两种模式互相串台
+    """
     d = os.path.join(root, UNDO_DIR)
     if not os.path.isdir(d):
         return []
     fs = [os.path.join(d, f) for f in os.listdir(d) if f.startswith("undo_") and f.endswith(".json")]
+    if kind:
+        fs = [p for p in fs if undo_kind_of(p) == kind]
     return sorted(fs, reverse=True)
 
 
@@ -435,6 +586,7 @@ def undo(undo_file: str, progress=None) -> tuple[int, int, list[str]]:
             os.makedirs(os.path.dirname(src), exist_ok=True)
             Organizer._safe_move(dst, src)   # 对称使用安全移动，跨盘也能正确撤销
             ok += 1
+            _cleanup_empty_dirs(os.path.dirname(dst))   # 搬空的程序自建目录顺手清掉，尽量还原现场
         except Exception as e:
             fail += 1
             errs.append(f"{os.path.basename(dst)}: {e}")
@@ -447,13 +599,14 @@ def undo(undo_file: str, progress=None) -> tuple[int, int, list[str]]:
     return ok, fail, errs
 
 
-def undo_upto(root: str, target_file: str, progress=None) -> tuple[int, int, list[str]]:
+def undo_upto(root: str, target_file: str, progress=None,
+              kind: str | None = None) -> tuple[int, int, list[str]]:
     """撤销到 target_file 这次归档（含其后所有更新的归档），一次性回到指定状态。
 
     list_undo_files 已按时间倒序（files[0] 最新）。把 files[0..idx] 全部依次撤销，
     即 E→A 的逆序还原。仍严格不覆盖。
     """
-    files = list_undo_files(root)
+    files = list_undo_files(root, kind=kind)
     if target_file not in files:
         return 0, 0, [f"找不到撤销记录：{os.path.basename(target_file)}"]
     idx = files.index(target_file)

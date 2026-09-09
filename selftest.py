@@ -21,7 +21,7 @@ from PIL import Image, ImageDraw
 
 from core.config import CategoryBook, Settings
 from core.classifier import Classifier
-from core.organizer import Organizer, scan_folder, list_undo_files, undo
+from core.organizer import Organizer, scan_folder, list_undo_files, undo, MARKER_FILE
 from core.media import ffmpeg_path, probe
 
 PASS, FAIL = "  [OK] ", "  [!!] "
@@ -86,14 +86,53 @@ def make_samples(root: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
-def main() -> int:
+def _tmp_root() -> str:
+    return os.path.abspath(os.environ.get("PHOTO_SORTER_TESTDIR") or tempfile.gettempdir())
+
+
+def _prepare_tmpdir() -> str:
+    """准备测试用的临时目录。
+
+    以前这里是 shutil.rmtree(os.path.abspath(args[0]))——命令行传进来的路径会被
+    无条件删掉，手滑传个真实目录（比如 D:\\我的照片）就整个没了，而
+    ignore_errors=True 还会把失败悄悄吞掉。
+
+    现在：默认直接新建一个唯一的临时目录；只有当传入路径确实位于系统临时目录
+    之下、而且是空的，才允许拿来用，其余一律拒绝。
+    """
+    allowed = _tmp_root()
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    if args:
-        tmp = os.path.abspath(args[0])
-    else:
-        base = os.environ.get("PHOTO_SORTER_TESTDIR") or tempfile.gettempdir()
-        tmp = os.path.join(base, "photo_sorter_selftest")
-    shutil.rmtree(tmp, ignore_errors=True)
+    if not args:
+        return tempfile.mkdtemp(prefix="photo_sorter_selftest_", dir=allowed)
+
+    want = os.path.abspath(args[0])
+    try:
+        inside = os.path.commonpath([want, allowed]) == allowed
+    except ValueError:                      # 跨盘符等无法比较的情况，一律算越界
+        inside = False
+    if not inside:
+        print(f"拒绝使用 {want}\n测试目录必须位于 {allowed} 之下，以免误删真实文件。")
+        sys.exit(2)
+    if os.path.isdir(want) and os.listdir(want):
+        print(f"拒绝使用 {want}\n目录非空，请换一个不存在的路径，或先手动清空它。")
+        sys.exit(2)
+    os.makedirs(want, exist_ok=True)
+    return want
+
+
+def _cleanup_tmpdir(tmp: str) -> None:
+    try:
+        if os.path.isdir(tmp):
+            shutil.rmtree(tmp)
+    except OSError as e:
+        print(f"（临时目录没清干净，可手动删除：{tmp}\n  原因：{e}）")
+
+
+def main() -> int:
+    tmp = _prepare_tmpdir()
+    import atexit
+    # 注册兜底清理：无论正常结束还是中途抛异常，临时目录都会被删掉，不留残留
+    atexit.register(_cleanup_tmpdir, tmp)
     root = os.path.join(tmp, "手机21年照片")
 
     print("\n=== 1. 生成样本 ===")
@@ -151,7 +190,7 @@ def main() -> int:
     moved_now = []
     for dirpath, _, fns in os.walk(root):
         for fn in fns:
-            if not fn.endswith(".json"):
+            if not fn.endswith(".json") and fn != MARKER_FILE:
                 moved_now.append(os.path.join(dirpath, fn))
     after = {md5(p): p for p in moved_now}
     same = sum(1 for p, (h, _, _) in before.items() if h in after)
@@ -168,7 +207,8 @@ def main() -> int:
     print(f"    生成的类别文件夹：{cat_dirs}")
     probe_dir = None
     for d in cat_dirs:
-        fs = os.listdir(os.path.join(root, d))
+        # 程序会在自己新建的类别文件夹里放一个隐藏标记，它不是照片，不能拿来当样本
+        fs = [f for f in os.listdir(os.path.join(root, d)) if f != MARKER_FILE]
         if fs:
             probe_dir = (d, fs[0])
             break
@@ -199,6 +239,41 @@ def main() -> int:
     check(len(back) == len(before), f"全部 {len(before)} 个文件回到原始路径")
     check(all(md5(p) == before[p][0] for p in back), "还原后 MD5 依旧一致")
 
+    print("\n=== 8. 原位重命名（不移动、不建文件夹） ===")
+    from core.renamer import InPlaceRenamer, list_disk_undo_files, undo_disk
+    root2 = os.path.join(tmp, "原位测试")
+    os.makedirs(root2)
+    for p in src_files:
+        shutil.copy2(p, os.path.join(root2, os.path.basename(p)))
+    st2 = Settings(recursive=True, video_as_own_category=False,
+                   date_source="exif", inplace_date_granularity="year")
+    ren = InPlaceRenamer(book, st2, clf)
+    items2 = ren.build_plan([root2])
+    ren.assign_names(items2)
+    for it in items2:
+        print(f"    {os.path.basename(it.src):38s} -> {it.new_name}")
+    check(all(it.new_name for it in items2), "原位重命名生成了新文件名")
+    check(all(re.search(r"^(\d{4}(\.\d{2}){0,2}\.)?[^.]+\.\d{2,}\.[A-Za-z0-9]+$", it.new_name)
+             for it in items2), "原位重命名格式 年[.月.日].分类.序号 正确")
+    rep = ren.execute(items2)
+    print(f"    成功 {rep.moved} / 跳过 {rep.skipped} / 失败 {rep.failed}")
+    check(rep.failed == 0, "原位重命名无失败项")
+    from core.config import ALL_EXTS as _EXTS
+    after2 = [os.path.join(dp, fn) for dp, _, fns in os.walk(root2) for fn in fns]
+    photo_after = [p for p in after2 if os.path.splitext(p)[1].lower() in _EXTS]
+    check(all(os.path.dirname(p) == root2 for p in photo_after), "原位重命名未移动文件、未建子文件夹")
+    orig_map = {os.path.basename(p): before[p][0] for p in src_files}
+    same2 = sum(1 for it in items2 if md5(it.dst) == orig_map.get(os.path.basename(it.src)))
+    check(same2 == len(src_files), f"原位重命名后 {len(src_files)} 个文件字节级一致（零重编码）")
+    orig_in_root2 = [os.path.join(root2, os.path.basename(p)) for p in src_files]
+    check(all(not os.path.exists(p) for p in orig_in_root2), "原位重命名后 root2 内原文件名已变为新名")
+    dus = list_disk_undo_files([root2])
+    check(bool(dus), f"原位重命名生成了撤销记录 {len(dus)} 份")
+    o, f, errs = undo_disk([root2])
+    print(f"    撤销还原 {o} 个")
+    check(o == len(src_files), "原位重命名全部可撤销还原")
+    check(all(md5(p) == before[p][0] for p in src_files if os.path.exists(p)), "撤销后 MD5 一致")
+
     print("\n" + "=" * 60)
     if _errors:
         print(f"未通过 {len(_errors)} 项：")
@@ -208,6 +283,7 @@ def main() -> int:
         print("全部通过。")
     print(f"测试目录：{root}")
     print("=" * 60)
+    _cleanup_tmpdir(tmp)
     return 1 if _errors else 0
 
 

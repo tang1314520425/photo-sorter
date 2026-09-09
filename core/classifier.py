@@ -55,6 +55,22 @@ _SHOT_NAME_RE = re.compile(
     re.I,
 )
 
+# 截图常见输出格式（相机不会产出这些）；配合分辨率一起判断是不是截图
+_SHOT_EXTS = {".png", ".bmp", ".gif"}
+
+
+def _looks_like_screenshot(info) -> bool:
+    """在「分辨率等于常见屏幕尺寸」的前提下，再判断这到底是不是截图。
+
+    为什么需要这一层：1920×1080 恰恰是最常见的照片尺寸，
+    只凭分辨率会把用户拍的 1080p 风景照、人像照统统误判成截图。
+    真照片几乎都带 EXIF 拍摄时间（或文件名里带日期），截图没有。
+    """
+    if os.path.splitext(info.path)[1].lower() in _SHOT_EXTS:
+        return True
+    # 没有 EXIF / 视频元数据 / 文件名日期 → 大概率不是相机产物
+    return not info.shot_time or info.time_source not in ("exif", "video_meta", "filename")
+
 
 class ClassifyResult:
     __slots__ = ("category", "confidence", "reason", "scores")
@@ -210,7 +226,12 @@ class Classifier:
                 name = os.path.basename(info.path)
                 if _SHOT_NAME_RE.search(name):
                     return c
-                if (info.width, info.height) in _SCREEN_SIZES:
+                # 光看分辨率不够：1920×1080 恰恰是最常见的照片尺寸，
+                # 只凭尺寸会把大量普通照片误判成截图（用户拍的 1080p 风景照首当其冲）。
+                # 所以尺寸只当辅助条件，必须再满足下面任一条才认定是截图：
+                #   · 读不到拍摄时间（真照片几乎都带 EXIF，截图没有）
+                #   · 是 PNG/BMP（截图工具的默认输出格式）
+                if (info.width, info.height) in _SCREEN_SIZES and _looks_like_screenshot(info):
                     return c
         return None
 
